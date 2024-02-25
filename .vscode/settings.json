@@ -1,0 +1,11 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "name": "rents",
+            "database": "${workspaceFolder:craigscraper}/craigscraper/rents.db"
+        }
+    ],
+    "sqltools.useNodeRuntime": true
+}

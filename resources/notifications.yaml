@@ -1,0 +1,8 @@
+---
+version: 1
+
+# adding the standard Desktop notification paths. Not working urls will be ignored
+urls:
+  - dbus://
+  - macosx://_/?sound=default
+  - windows://
