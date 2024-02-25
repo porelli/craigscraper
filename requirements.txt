@@ -3,6 +3,7 @@ geopy==2.4.1
 itemadapter==0.8.0
 python-dotenv==1.0.1
 regex_spm==1.0.0
+schedule==1.2.1
 Scrapy==2.11.1
 setuptools==69.1.1
 termcolor==2.4.0
