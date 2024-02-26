@@ -10,6 +10,7 @@ import sqlite3
 import os
 from dotenv import load_dotenv
 from apprise import NotifyType
+from apprise import NotifyFormat
 from termcolor import colored
 
 
@@ -100,7 +101,7 @@ class CraigscraperPipeline:
 
             title = f"${price} / {item['size']}sqft / {item['available_on']} - {item['title']}"
             body = (f"Link: {item['link']}\n"
-                        f"Distance from the reference: {item['distance']}\n"
+                        f"Distance from the reference: {item['distance']}km\n"
                         f"Gym: {item['gym']}\n"
                         f"Pool: {item['pool']}\n\n"
                         f"Description: {item['description']}")
@@ -108,7 +109,8 @@ class CraigscraperPipeline:
             spider.notifications.apobj.notify(
                 title       = title,
                 body        = body,
-                notify_type = NotifyType.SUCCESS
+                notify_type = NotifyType.SUCCESS,
+                body_format = NotifyFormat.TEXT
             )
         else:
             print(colored('CRAIGSCRAPER RAN FOR THE FIRST TIME, NOTIFICATIONS HAVE BEEN SUPPRESSED', 'magenta'))
