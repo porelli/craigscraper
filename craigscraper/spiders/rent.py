@@ -103,6 +103,7 @@ class RentSpider(scrapy.Spider):
         if len(only_db_list) > 0:
             print(colored('Apartment(s) have been unpublished: %s'%(' '.join(only_db_list)), 'magenta'))
             cursor.execute('UPDATE listings SET still_published = \'False\' WHERE link IN (%s)' %','.join('?'*len(only_db_list)), only_db_list)
+            connection.commit()
 
         # listings only on cl -> we need to add them, normal processing
         only_cl_list = list(set(cl_links) - set(db_links))
