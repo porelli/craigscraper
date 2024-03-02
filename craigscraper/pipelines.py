@@ -99,12 +99,24 @@ class CraigscraperPipeline:
             else:
                 price = item['price']
 
-            title = f"${price} / {item['size']}sqft / {item['available_on']} - {item['title']}"
-            body = (f"Link: {item['link']}\n"
-                        f"Distance from the reference: {item['distance']}km\n"
-                        f"Gym: {item['gym']}\n"
-                        f"Pool: {item['pool']}\n\n"
-                        f"Description: {item['description']}")
+            if item['size'] == None:
+                size = "Unknown"
+            else:
+                size = f"{item['size']}sqft"
+
+            if item['available_on']:
+                available_on = f"{item['available_on']}"
+            else:
+                available_on = "Unknown"
+
+            title = f"${price} / {size} / {available_on} - {item['title']}"
+            body = (
+                f"Link: {item['link']}\n"
+                f"Distance from the reference: {item['distance']}km\n"
+                f"Gym: {item['gym']}\n"
+                f"Pool: {item['pool']}\n\n"
+                f"Description: {item['description']}"
+            )
 
             spider.notifications.apobj.notify(
                 title       = title,
