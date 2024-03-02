@@ -56,6 +56,7 @@ class CraigscraperPipeline:
         self.cur.execute("""CREATE INDEX IF NOT EXISTS prices_ids ON prices(listing_id)""")
 
     def process_item(self, item, spider):
+        # insert or replace if unique index(s) (id OR link) are violated deleting previous row
         self.cur.execute("""INSERT or REPLACE into listings
                             (id, link, rooms, available_on, size, attributes, description, title, gym, pool, distance, last_price, last_updated, posted_on, still_published) VALUES
                             (?,  ?,    ?,     ?,            ?,    ?,          ?,           ?,     ?,   ?,    ?,        ?,          ?,            ?,         ?)""",
@@ -74,9 +75,11 @@ class CraigscraperPipeline:
                              item['price'],
                              item['last_updated'],
                              item['posted_on'],
-                             'True'
+                             'True' # always set this as true during insert
                          )
         )
+
+        # insert or ignore if unique index(s) (listing_id AND last_updated AND price) are violated deleting previous row
         self.cur.execute("""INSERT OR IGNORE INTO prices (listing_id, last_updated, price) VALUES (?, ?, ?)""",
                          (
                              item['id'],

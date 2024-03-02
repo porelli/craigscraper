@@ -21,7 +21,7 @@ Scan (and monitor) Craigslist for new apartments within the defined parameters.
 1. prepare a ```.env``` file using the ```.env_template``` as model. Remember to uncomment the last two lines to allow data persistance
 1. run docker: ```docker run --env-file ./craigscraper/.env -v ./craigscraper:/persist ghcr.io/porelli/craigscraper:main```
 
-#### if you want to examinate the file
+#### if you want to examinate the database
 - ```docker run -it --rm -p 8080:8080 -v ./craigscraper:/data -e SQLITE_DATABASE=rents.db coleifer/sqlite-web```
 
 ### Local or dev

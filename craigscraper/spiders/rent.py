@@ -93,10 +93,10 @@ class RentSpider(scrapy.Spider):
         common_list = list(set(cl_links).intersection(db_links))
         for listing in common_list:
             if db_data[listing] == cl_data[listing]:
-                print(colored('Apartment %s already fetched and price is unchanged: %s'%(self.get_id(listing), listing), 'green'))
+                print(colored('Apartment %s already fetched and price ($%s) is unchanged: %s'%(self.get_id(listing), db_data[listing], listing), 'green'))
             else:
                 links_to_examinate.append(listing)
-                print(colored('Apartment %s already fetched but price is changed: %s'%(self.get_id(listing), listing), 'yellow'))
+                print(colored('Apartment %s already fetched but price ($%s) is changed to $%s: %s'%(self.get_id(listing), db_data[listing], cl_data[listing], listing), 'yellow'))
 
         # listings only on db -> update as still_published = 'False'
         only_db_list = list(set(db_links) - set(cl_links))
@@ -108,7 +108,7 @@ class RentSpider(scrapy.Spider):
         only_cl_list = list(set(cl_links) - set(db_links))
         for listing in only_cl_list:
             links_to_examinate.append(listing)
-            print(colored('Apartment %s is new: %s'%(self.get_id(listing), listing), 'cyan'))
+            print(colored('Apartment %s ($%s) is new: %s'%(self.get_id(listing), cl_data[listing], listing), 'cyan'))
 
         # continue scraping the links
         for link in links_to_examinate:
