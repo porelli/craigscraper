@@ -68,8 +68,8 @@ class RentSpider(scrapy.Spider):
     def parse(self, response):
         links_to_examinate = []
 
-        cl_data = {}
-        cl_links = []
+        cl_data = {} # stores a dictionary of listing on CL to dictionary "link: price"
+        cl_links = [] # stores all the links of current listings to avoid extracting keys in a second stage
 
         for property in response.css('.cl-static-search-results li')[1:]:
             # title = property.css('li::attr(title)').extract()
@@ -86,8 +86,8 @@ class RentSpider(scrapy.Spider):
 
         # find listings already in the database
         cursor.execute('SELECT link, last_price FROM listings WHERE link IN (%s)' %','.join('?'*len(cl_links)), cl_links)
-        db_data = dict(cursor.fetchall())
-        db_links = list(db_data.keys())
+        db_data = dict(cursor.fetchall()) # convert array of tuples to dictionary "link: price"
+        db_links = list(db_data.keys()) # extract the links
 
         # listing on both db and cl -> check if price has changed
         common_list = list(set(cl_links).intersection(db_links))
@@ -101,7 +101,7 @@ class RentSpider(scrapy.Spider):
         # listings only on db -> update as still_published = 'False'
         only_db_list = list(set(db_links) - set(cl_links))
         if len(only_db_list) > 0:
-            print(colored('Apartments have been unpublished: %s'%(' '.join(only_db_list)), 'magenta'))
+            print(colored('Apartment(s) have been unpublished: %s'%(' '.join(only_db_list)), 'magenta'))
             cursor.execute('UPDATE listings SET still_published = \'False\' WHERE link IN (%s)' %','.join('?'*len(only_db_list)), only_db_list)
 
         # listings only on cl -> we need to add them, normal processing
@@ -131,7 +131,7 @@ class RentSpider(scrapy.Spider):
         item['price'] = int(''.join(filter(str.isdigit, response.css('span.price').get())))
         times = response.css('div.postinginfos p.postinginfo.reveal time::attr(datetime)').getall()
         item['posted_on'] = times[0]
-        if len(times) == 2:
+        if len(times) == 2: # last_updated matches created_on if not present
             item['last_updated'] = times[1]
         else:
             item['last_updated'] = times[0]

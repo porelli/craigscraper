@@ -89,11 +89,11 @@ class CraigscraperPipeline:
 
         # send notifications only if it's not the the first run (file exists)
         if not spider.first_run:
-            # check if we had more prices for the same apartment
+            # check if we had more prices for the same apartment and order them from most recent to oldest
             self.cur.execute("SELECT price FROM prices WHERE listing_id = ? ORDER BY last_updated DESC", [item['id']])
             data = self.cur.fetchall() # data is an array of tuples
 
-            # if so, we want to build the subject with all the prices
+            # if there are multiple results, we want to build the subject with all the prices
             if len(data) > 1:
                 price = ' <- $'.join(str(price[0]) for price in data)
             else:
@@ -110,7 +110,7 @@ class CraigscraperPipeline:
                 title       = title,
                 body        = body,
                 notify_type = NotifyType.SUCCESS,
-                body_format = NotifyFormat.TEXT
+                body_format = NotifyFormat.TEXT # this is necessary to preserve newlines in the notifications
             )
         else:
             print(colored('CRAIGSCRAPER RAN FOR THE FIRST TIME, NOTIFICATIONS HAVE BEEN SUPPRESSED', 'magenta'))
