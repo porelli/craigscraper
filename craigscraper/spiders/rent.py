@@ -99,10 +99,12 @@ class RentSpider(scrapy.Spider):
                 print(colored('Apartment %s already fetched but price ($%s) is changed to $%s: %s'%(self.get_id(listing), db_data[listing], cl_data[listing], listing), 'yellow'))
 
         # listings only on db -> update as still_published = 'False'
-        only_db_list = list(set(db_links) - set(cl_links))
-        if len(only_db_list) > 0:
-            print(colored('Apartment(s) have been unpublished: %s'%(' '.join(only_db_list)), 'magenta'))
-            cursor.execute('UPDATE listings SET still_published = \'False\' WHERE link IN (%s)' %','.join('?'*len(only_db_list)), only_db_list)
+        cursor.execute('SELECT link, last_price FROM listings WHERE link NOT IN (%s)' %','.join('?'*len(cl_links)), cl_links)
+        only_db_data = dict(cursor.fetchall()) # convert array of tuples to dictionary "link: price"
+        only_db_links = list(only_db_data.keys()) # extract the links
+        if len(only_db_links) > 0:
+            print(colored('Apartment(s) have been unpublished: %s'%(' '.join(only_db_links)), 'magenta'))
+            cursor.execute('UPDATE listings SET still_published = \'False\' WHERE link IN (%s)' %','.join('?'*len(only_db_links)), only_db_links)
             connection.commit()
 
         # listings only on cl -> we need to add them, normal processing
