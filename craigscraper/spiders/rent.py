@@ -8,6 +8,7 @@ import re
 from termcolor import colored
 from dotenv import load_dotenv
 from notifications import Notifications
+from craigscraper.spiders.shared_utils import SharedUtils
 
 
 class RentSpider(scrapy.Spider):
@@ -64,6 +65,9 @@ class RentSpider(scrapy.Spider):
         else:
             print(colored('DATABASE EXISTS, NOTIFICATIONS ENABLED', 'green'))
             self.first_run = False
+
+        # initialize utils
+        self.utils = SharedUtils()
 
     def parse(self, response):
         links_to_examinate = []
@@ -129,8 +133,9 @@ class RentSpider(scrapy.Spider):
         item['lat'] = geo[0]
         item['lon'] = geo[1]
         item['distance'] = geopy.distance.geodesic(self.distance_from, geo).km
-        item['gym'] = str("gym" in item['description']) or str("fitness" in item['description'])
-        item['pool'] = str("pool" in item['description'])
+        item['gym'] = self.utils.findFeature('gym', item)
+        item['pool'] = self.utils.findFeature('pool', item)
+        item['parking'] = self.utils.findFeature('parking', item)
         item['price'] = int(''.join(filter(str.isdigit, response.css('span.price').get())))
         times = response.css('div.postinginfos p.postinginfo.reveal time::attr(datetime)').getall()
         item['posted_on'] = times[0]

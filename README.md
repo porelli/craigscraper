@@ -6,7 +6,7 @@ Scan (and monitor) Craigslist for new apartments within the defined parameters.
 
 ### Features
 - sends notifications (after first run) for any new apartment
-- extract features like gym, pool, availability and apartment size from the description
+- extract features like parking, gym, pool, availability and apartment size from the description
 - calculate distance from a location (i.e.: your work place)
 - stores everything conveniently in a sqlite database
 
