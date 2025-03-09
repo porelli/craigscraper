@@ -53,8 +53,8 @@ COOKIES_ENABLED = False
 DOWNLOADER_MIDDLEWARES = {
     'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
     'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
-    'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
-    'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 401,
+    'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 500, # https://github.com/alecxe/scrapy-fake-useragent/issues/36#issuecomment-1491458670
+    'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 501, # https://github.com/alecxe/scrapy-fake-useragent/issues/36#issuecomment-1491458670
 }
 
 # Enable or disable extensions
@@ -97,3 +97,10 @@ FEED_EXPORT_ENCODING = "utf-8"
 
 # set to 1 to exit on error
 CLOSESPIDER_ERRORCOUNT = 1
+
+FAKEUSERAGENT_PROVIDERS = [
+    'scrapy_fake_useragent.providers.FakeUserAgentProvider',
+    'scrapy_fake_useragent.providers.FakerProvider',
+    'scrapy_fake_useragent.providers.FixedUserAgentProvider',
+]
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.3'
