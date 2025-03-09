@@ -99,7 +99,7 @@ class RentSpider(scrapy.Spider):
                 print(colored('Apartment %s already fetched but price ($%s) is changed to $%s: %s'%(self.get_id(listing), db_data[listing], cl_data[listing], listing), 'yellow'))
 
         # listings only on db -> update as still_published = 'False'
-        cursor.execute('SELECT link, last_price FROM listings WHERE link NOT IN (%s)' %','.join('?'*len(cl_links)), cl_links)
+        cursor.execute('SELECT link, last_price FROM listings WHERE still_published = \'True\' AND link NOT IN (%s)' %','.join('?'*len(cl_links)), cl_links)
         only_db_data = dict(cursor.fetchall()) # convert array of tuples to dictionary "link: price"
         only_db_links = list(only_db_data.keys()) # extract the links
         if len(only_db_links) > 0:
