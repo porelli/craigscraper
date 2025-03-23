@@ -124,7 +124,7 @@ class RentSpider(scrapy.Spider):
     def parseItem(self, response):
         item = {}
 
-        item['attributes'] = response.css('.attrgroup')[2].css('div span::text').getall()
+        item['attributes'] = response.css('.attrgroup')[2].css('div span a::text').getall()
         item['description'] = ' '.join(response.css('section#postingbody::text').getall()).strip()
         item['title'] = response.xpath("//meta[@property='og:title']/@content").extract_first().removesuffix('- craigslist')
         item['link'] = response.xpath("//meta[@property='og:url']/@content").extract_first()
