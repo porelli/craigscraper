@@ -99,6 +99,9 @@ class CraigscraperPipeline:
 
                     for row in rows:
                         id = row['id']
+                        # we expect attributes to be a list
+                        item = dict(row)
+                        item['attributes'] = row['attributes'].split(',')
                         new_value = utils.findFeature(column_name, row)
 
                         if new_value is not None:  # Only update if new_value is valid
