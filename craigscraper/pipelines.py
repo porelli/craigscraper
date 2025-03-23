@@ -37,6 +37,7 @@ class CraigscraperPipeline:
             "gym TEXT",
             "pool TEXT",
             "parking TEXT",
+            "ev_charging TEXT",
             "distance REAL",
             "last_price INTEGER",
             "last_updated TEXT",
@@ -71,7 +72,7 @@ class CraigscraperPipeline:
         existing_columns = {column[1] for column in self.cur.fetchall()}
 
         # Columns that can be backfilled
-        reprocessable_columns = ['pool', 'gym', 'parking']
+        reprocessable_columns = ['pool', 'gym', 'parking', 'ev_charging']
         utils = SharedUtils()
         # Set row to be returned as dictionary
         self.con.row_factory = sqlite3.Row

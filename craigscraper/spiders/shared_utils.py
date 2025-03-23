@@ -14,6 +14,17 @@ class SharedUtils:
         re.IGNORECASE
     )
 
+    ev_charging_pattern = re.compile(
+        r'\b('
+        r'(EV|electric vehicle|electric car|EVC|EVCS)\s*(charging|charger|charge|station|port|outlet)'
+        r'|'
+        r'(charging|charger)\s*(station|port|outlet)?\s*for\s*(EV|electric vehicle|electric car)'
+        r')'
+        r'(?:\s*(?:is|are|with|has|have|includes?|included|available|ready|enabled|capable|equipped))?'
+        r'(?:\s*(?:on[- ]site|on[- ]premises|in[- ]building|in[- ]garage|in[- ]parking))?',
+        re.IGNORECASE
+    )
+
     def findFeature(self, feature, item):
         match feature:
             case 'pool':
@@ -22,6 +33,8 @@ class SharedUtils:
                 result = ("gym" in item['description'] or "fitness" in item['description'])
             case 'parking':
                 result = bool(self.parking_pattern.search(item['description']) or any(self.parking_pattern.search(attr) for attr in item['attributes']))
+            case 'ev_charging':
+                result = bool(self.ev_charging_pattern.search(item['description']) or any(self.ev_charging_pattern.search(attr) for attr in item['attributes']))
 
         # Convert the boolean value to 'True' or 'False' string
         return'True' if result else 'False'

@@ -136,6 +136,7 @@ class RentSpider(scrapy.Spider):
         item['gym'] = self.utils.findFeature('gym', item)
         item['pool'] = self.utils.findFeature('pool', item)
         item['parking'] = self.utils.findFeature('parking', item)
+        item['ev_charging'] = self.utils.findFeature('ev_charging', item)
         item['price'] = int(''.join(filter(str.isdigit, response.css('span.price').get())))
         times = response.css('div.postinginfos p.postinginfo.reveal time::attr(datetime)').getall()
         item['posted_on'] = times[0]
