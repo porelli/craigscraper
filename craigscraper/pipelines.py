@@ -108,9 +108,6 @@ class CraigscraperPipeline:
                                 WHERE id = ?""", (new_value, id)
                             )
 
-                    # Commit changes after processing all rows
-                    self.con.commit()
-
                     print(colored(f"Old data has been re-processed. Updated rows: {len(rows)}", 'green'))
                 else:
                     print(colored(f"Old data cannot be re-processed for this column.", 'red'))
