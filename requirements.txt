@@ -1,10 +1,13 @@
 apprise==1.9.2
 geopy==2.4.1
 itemadapter==0.11.0
+pandas==2.2.3
+plotly==6.0.1
 python-dotenv==1.0.1
 regex_spm==1.0.0
 schedule==1.2.2
 Scrapy==2.12.0
 setuptools==75.8.2
+streamlit==1.43.2
 termcolor==2.5.0
 scrapy-fake-useragent==1.4.4
