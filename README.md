@@ -18,16 +18,16 @@ Scan (and monitor) Craigslist for new apartments within the defined parameters.
 ### Docker
 1. create a folder for the app and change your workdir: ```mkdir craigscraper; cd craigscraper```
 1. create a notification file using the instructions below ```vi notifications.yaml```
-1. prepare a ```.env``` file using the ```.env_template``` as model. Remember to uncomment the last two lines to allow data persistance
+1. prepare a ```.env``` file using the ```.env_template``` as model. Remember to uncomment the last two lines to allow data persistence
 1. run docker: ```docker run --env-file ./craigscraper/.env -v ./craigscraper:/persist ghcr.io/porelli/craigscraper:main```
 
 #### if you want to examinate the database
 - ```docker run -it --rm -p 8080:8080 -v ./craigscraper:/data -e SQLITE_DATABASE=rents.db coleifer/sqlite-web```
 
 ### Local or dev
-1. clone the package
-1. copy ```.env_template``` to ```.env```
-1. replace values in ```.env```
+1. clone the package: ```git clone git@github.com:porelli/craigscraper.git && cd craigscraper```
+1. copy env file: ```cp .env_template .env```
+1. replace env values: ```nano .env```
 1. create venv: ```python3 -m venv .venv```
 1. activate venv: ```source .venv/bin/activate```
 1. install dependencies: ```pip3 install -r requirements.txt```
