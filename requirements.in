@@ -12,7 +12,7 @@ python-dotenv
 regex_spm
 schedule
 Scrapy
-setuptools
+setuptools<70  # pin to older version that still includes pkg_resources
 streamlit
 termcolor
 scrapy-fake-useragent
