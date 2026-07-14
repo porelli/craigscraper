@@ -29,6 +29,9 @@ class CraigscraperPipeline:
             "id INTEGER PRIMARY KEY",
             "link TEXT",
             "rooms TEXT",
+            "bedrooms REAL",
+            "bathrooms REAL",
+            "bathrooms_type TEXT",
             "available_on TEXT",
             "size INTEGER",
             "attributes BLOB",
@@ -57,6 +60,19 @@ class CraigscraperPipeline:
 
         self.create_table_if_not_exists('listings', listing_columns)
         self.create_table_if_not_exists('prices', prices_columns, prices_constraints)
+
+        # history of content-field edits (forward-only; populated in process_item)
+        self.cur.execute("""CREATE TABLE IF NOT EXISTS listing_changes (
+            listing_id INTEGER,
+            field      TEXT,
+            old_value  TEXT,
+            new_value  TEXT,
+            changed_at TEXT
+        )""")
+        self.cur.execute("""CREATE INDEX IF NOT EXISTS listing_changes_ids ON listing_changes(listing_id)""")
+        self.con.commit()
+
+        self.backfill_rooms()
 
     def create_table_if_not_exists(self, table_name, columns, constraints=None):
         # Create table if it doesn't exist
@@ -126,20 +142,75 @@ class CraigscraperPipeline:
         self.con.commit()
         print(colored(f"Backfill complete for '{column_name}'. Updated rows: {updated}", 'green'))
 
+    def backfill_rooms(self):
+        utils = SharedUtils()
+        self.con.row_factory = sqlite3.Row
+        special_cur = self.con.cursor()
+        self.con.row_factory = None
+
+        special_cur.execute("SELECT id, rooms FROM listings WHERE bedrooms IS NULL AND rooms IS NOT NULL")
+        rows = special_cur.fetchall()
+        if not rows:
+            return
+
+        print(colored(f"Backfilling parsed rooms for {len(rows)} row(s)...", 'cyan'))
+        updated = 0
+        for row in rows:
+            parsed = utils.parse_rooms(row['rooms'])
+            self.con.execute(
+                "UPDATE listings SET bedrooms = ?, bathrooms = ?, bathrooms_type = ? WHERE id = ?",
+                (parsed['bedrooms'], parsed['bathrooms'], parsed['bathrooms_type'], row['id'])
+            )
+            updated += 1
+
+        self.con.commit()
+        print(colored(f"Rooms backfill complete. Updated rows: {updated}", 'green'))
+
     def create_indexes_if_not_exist(self):
         self.cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS listings_ids ON listings(id)""")
         self.cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS listings_links ON listings(link)""")
         self.cur.execute("""CREATE INDEX IF NOT EXISTS prices_ids ON prices(listing_id)""")
 
     def process_item(self, item, spider):
+        # record content-field edits before we overwrite the stored row (forward-only history)
+        tracked_fields = ['title', 'description', 'attributes', 'available_on', 'size', 'rooms']
+        incoming = {
+            'title': item['title'],
+            'description': item['description'],
+            'attributes': ', '.join(item['attributes']),  # stored form
+            'available_on': item['available_on'],
+            'size': item['size'],
+            'rooms': item['rooms'],
+        }
+        self.cur.execute(
+            "SELECT title, description, attributes, available_on, size, rooms FROM listings WHERE id = ?",
+            (item['id'],)
+        )
+        stored = self.cur.fetchone()
+        if stored is not None:
+            stored_map = dict(zip(tracked_fields, stored))
+            for field in tracked_fields:
+                old_val = stored_map[field]
+                new_val = incoming[field]
+                # normalize to string for a stable comparison (DB returns native types)
+                if (old_val if old_val is None else str(old_val)) != (new_val if new_val is None else str(new_val)):
+                    self.cur.execute(
+                        "INSERT INTO listing_changes (listing_id, field, old_value, new_value, changed_at) VALUES (?, ?, ?, ?, ?)",
+                        (item['id'], field, None if old_val is None else str(old_val),
+                         None if new_val is None else str(new_val), item['last_updated'])
+                    )
+
         # insert or replace if unique index(s) (id OR link) are violated deleting previous row
         self.cur.execute("""INSERT or REPLACE into listings
-                            (id, link, rooms, available_on, size, attributes, description, title, gym, pool, parking, ev_charging, distance, last_price, last_updated, posted_on, still_published) VALUES
-                            (?,  ?,    ?,     ?,            ?,    ?,          ?,           ?,     ?,   ?,    ?,       ?,           ?,        ?,          ?,            ?,         ?)""",
+                            (id, link, rooms, bedrooms, bathrooms, bathrooms_type, available_on, size, attributes, description, title, gym, pool, parking, ev_charging, distance, last_price, last_updated, posted_on, still_published) VALUES
+                            (?,  ?,    ?,     ?,        ?,         ?,              ?,            ?,    ?,          ?,           ?,     ?,   ?,    ?,       ?,           ?,        ?,          ?,            ?,         ?)""",
                          (
                              item['id'],
                              item['link'],
                              item['rooms'],
+                             item.get('bedrooms'),
+                             item.get('bathrooms'),
+                             item.get('bathrooms_type'),
                              item['available_on'],
                              item['size'],
                              ', '.join(item['attributes']),
