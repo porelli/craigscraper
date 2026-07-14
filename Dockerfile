@@ -1,9 +1,11 @@
-FROM python:3.13
+FROM python:3.14
 
 WORKDIR /app
 
-COPY . .
+COPY requirements.txt .
 
-RUN pip3 install -r requirements.txt
+RUN pip3 install --require-hashes -r requirements.txt
+
+COPY . .
 
 CMD ["bash", "run.sh"]
