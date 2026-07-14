@@ -14,6 +14,7 @@
 - `pip-tools` is **build-time only** — never added to `requirements.in`, never in the image.
 - `requirements.txt` is a **generated lockfile** — never hand-edited after Task 3.
 - Lockfile MUST be generated with `--generate-hashes`; Dockerfile MUST install with `--require-hashes`.
+- Lockfile MUST be generated inside a **Linux** `python:3.14` container (the deploy platform), NOT on the macOS dev host. pip-tools 7.x has no universal mode, so a macOS-generated lock omits platform-gated deps (e.g. `watchdog`, required by streamlit on non-Darwin) and then fails `--require-hashes` in the Linux image.
 - The manual Twisted / pyOpenSSL / cryptography / service-identity pins added during the incident fix are **removed** from the top-level list (Scrapy 2.17 resolves compatible versions).
 - **`setuptools` is NOT a dependency.** Latest setuptools (83.x) removed `pkg_resources`, which `notifications.py` imported. That call is modernized to a stdlib path lookup, so setuptools is dropped from `requirements.in` entirely and does not appear in the lock. (This supersedes the earlier `--allow-unsafe`/`setuptools<70` approaches — neither is used.)
 - Do NOT deploy until BOTH the crawler live-crawl and the UI 3-tab smoke test pass on Python 3.14.
@@ -213,54 +214,56 @@ git commit -m "refactor(notify) use stdlib path instead of pkg_resources for def
 
 ---
 
-## Task 3: Generate the hashed lockfile on Python 3.14
+## Task 3: Generate the hashed lockfile on Python 3.14 (in a Linux container)
 
 **Files:**
 - Modify: `requirements.txt` (replaced with generated content)
 
 **Interfaces:**
 - Consumes: `requirements.in` (Task 1).
-- Produces: a fully-pinned, hashed `requirements.txt`. Task 4 (Dockerfile) and Tasks 4/5 (verification venv) install from it.
+- Produces: a fully-pinned, hashed `requirements.txt`. Task 4 (Dockerfile) and Task 5 (verification) install from it.
 
-- [ ] **Step 1: Create a clean Python 3.14 tooling venv with pip-tools**
+**CRITICAL — generate on Linux, not macOS.** pip-tools 7.x has no `--universal` mode, so the
+lock reflects the platform it's compiled on. Some deps are platform-gated — notably
+`streamlit` requires `watchdog<7,>=2.1.5; platform_system != "Darwin"`. Compiling on macOS
+(Darwin) evaluates that marker false and OMITS watchdog, producing a lock that then fails
+`--require-hashes` install inside the Linux Docker image ("watchdog ... must be pinned").
+Therefore the lock MUST be generated inside a `python:3.14` Linux container, matching the
+deploy target.
 
+- [ ] **Step 1: Compile the lockfile inside a Linux python:3.14 container**
+
+From the repo root:
 ```bash
-rm -rf /tmp/lockgen && python3.14 -m venv /tmp/lockgen
-/tmp/lockgen/bin/pip install -q --upgrade pip pip-tools
-/tmp/lockgen/bin/pip-compile --version
+docker run --rm -v "$PWD":/app -w /app python:3.14 sh -c \
+  "pip install -q --upgrade pip pip-tools && \
+   pip-compile --generate-hashes --upgrade --output-file requirements.txt requirements.in"
 ```
-Expected: prints a `pip-compile, version ...` line.
+Expected: writes `requirements.txt`; exit 0. (No `--allow-unsafe` — setuptools is not a dependency; see Task 2b.)
 
-- [ ] **Step 2: Compile the lockfile with hashes, upgrading to latest**
-
-```bash
-/tmp/lockgen/bin/pip-compile --generate-hashes --upgrade \
-  --output-file requirements.txt requirements.in
-```
-Expected: writes `requirements.txt`; exit 0. (No `--allow-unsafe` needed — setuptools is not a dependency; see Task 2b and Global Constraints.)
-
-- [ ] **Step 3: Sanity-check the generated lockfile**
+- [ ] **Step 2: Sanity-check the generated lockfile (includes the platform-gated dep)**
 
 ```bash
-grep -E "^scrapy==|^pandas==|^streamlit==|^twisted==" -i requirements.txt
+grep -iE "^scrapy==|^pandas==|^streamlit==|^twisted==|^watchdog==" requirements.txt
 grep -c "sha256:" requirements.txt
 ```
-Expected: scrapy resolves to 2.17.x, pandas to 3.0.x, streamlit to 1.59.x, twisted present as a transitive pin; many `sha256:` hash lines.
+Expected: scrapy 2.17.x, pandas 3.0.x, streamlit 1.59.x, twisted (transitive), AND `watchdog==` present; many `sha256:` lines.
 
-- [ ] **Step 4: Verify the lock installs cleanly in a fresh 3.14 venv with --require-hashes**
+- [ ] **Step 3: Verify the lock installs cleanly with --require-hashes inside a Linux python:3.14 container**
 
+This mirrors exactly what the Docker build (Task 4) does — the real gate.
 ```bash
-rm -rf /tmp/lockverify && python3.14 -m venv /tmp/lockverify
-/tmp/lockverify/bin/pip install -q --require-hashes -r requirements.txt
-/tmp/lockverify/bin/python -c "import scrapy, pandas, streamlit, twisted, apprise, geopy, plotly, schedule, regex_spm, termcolor; print('all imports OK on', __import__('sys').version.split()[0])"
+docker run --rm -v "$PWD":/app -w /app python:3.14 sh -c \
+  "pip install --require-hashes -r requirements.txt && \
+   python -c \"import scrapy, pandas, streamlit, twisted, apprise, geopy, plotly, schedule, regex_spm, termcolor; import notifications; print('all imports OK on', __import__('sys').version.split()[0])\""
 ```
-Expected: `all imports OK on 3.14.x`, no hash errors.
+Expected: install succeeds with NO hash errors; prints `all imports OK on 3.14.x`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add requirements.txt
-git commit -m "build(deps) lock full dependency tree with hashes (pip-compile, py3.14)"
+git commit -m "build(deps) lock full dependency tree with hashes (linux, py3.14)"
 ```
 
 ---
@@ -483,10 +486,19 @@ Under the existing "Local or dev" section, add:
 Dependencies are locked in `requirements.txt` (generated, hashed) from `requirements.in`
 (loose, human-edited). Never hand-edit `requirements.txt`. To upgrade:
 
-1. install pip-tools in a throwaway env: `python3.14 -m venv /tmp/lock && /tmp/lock/bin/pip install pip-tools`
-2. regenerate the lock: `/tmp/lock/bin/pip-compile --generate-hashes --upgrade requirements.in`
-3. verify: build the image (`docker build .`) and run a bounded crawl + UI smoke test
-4. commit `requirements.txt` and push (CI rebuilds the image)
+1. regenerate the lock **inside a Linux python:3.14 container** (required — see note below):
+   ```
+   docker run --rm -v "$PWD":/app -w /app python:3.14 sh -c \
+     "pip install -q --upgrade pip pip-tools && \
+      pip-compile --generate-hashes --upgrade --output-file requirements.txt requirements.in"
+   ```
+2. verify: build the image (`docker build .`) and run a bounded crawl + UI smoke test
+3. commit `requirements.txt` and push (CI rebuilds the image)
+
+**Why in a container:** pip-tools 7.x has no universal-lock mode, so it pins for the platform
+it runs on. Some deps are platform-gated (e.g. `watchdog`, which streamlit needs only on
+non-macOS). Generating the lock on macOS omits them and the Linux image build then fails the
+`--require-hashes` install. Always generate on Linux, matching the deploy target.
 ```
 
 - [ ] **Step 2: Commit**
