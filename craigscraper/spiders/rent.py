@@ -253,6 +253,11 @@ class RentSpider(scrapy.Spider):
                     if size:
                         item['size'] = size
 
+        parsed_rooms = self.utils.parse_rooms(item['rooms'])
+        item['bedrooms'] = parsed_rooms['bedrooms']
+        item['bathrooms'] = parsed_rooms['bathrooms']
+        item['bathrooms_type'] = parsed_rooms['bathrooms_type']
+
         yield item
 
     def get_id(self, response):
