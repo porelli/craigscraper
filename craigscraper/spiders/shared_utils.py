@@ -25,6 +25,28 @@ class SharedUtils:
         re.IGNORECASE
     )
 
+    def parse_rooms(self, rooms_str):
+        # Split e.g. '2BR / 1.5Ba' into structured fields. Bedrooms are always integers;
+        # bathrooms are numeric (incl. halves) or a text type ('split'/'shared'). Never raises.
+        result = {'bedrooms': None, 'bathrooms': None, 'bathrooms_type': None}
+        if not rooms_str or '/' not in rooms_str:
+            return result
+
+        bed_part, bath_part = rooms_str.split('/', 1)
+
+        bed_digits = ''.join(ch for ch in bed_part if ch.isdigit())
+        if bed_digits:
+            result['bedrooms'] = float(bed_digits)
+
+        bath_token = bath_part.strip().removesuffix('Ba').removesuffix('ba').strip()
+        try:
+            result['bathrooms'] = float(bath_token)
+        except ValueError:
+            if bath_token:
+                result['bathrooms_type'] = bath_token.lower()
+
+        return result
+
     def findFeature(self, feature, item):
         match feature:
             case 'pool':
