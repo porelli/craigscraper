@@ -122,6 +122,38 @@ def get_property_price_history(listing_id):
 
     return pd.DataFrame({'date': dates, 'price': prices})
 
+@st.cache_data(ttl=300)
+def get_listing_timeline(listing_id):
+    conn = get_connection()
+    events = []
+
+    # price events: chronological, collapse consecutive identical prices (display-only)
+    prices = pd.read_sql_query(
+        "SELECT last_updated, price FROM prices WHERE listing_id = ? ORDER BY last_updated",
+        conn, params=(listing_id,)
+    )
+    prev = None
+    for i, r in prices.iterrows():
+        if prev is None:
+            events.append({'when': r['last_updated'], 'field': 'price', 'old': '', 'new': f"${int(r['price']):,}"})
+        elif r['price'] != prev:
+            events.append({'when': r['last_updated'], 'field': 'price', 'old': f"${int(prev):,}", 'new': f"${int(r['price']):,}"})
+        prev = r['price']
+
+    # field changes
+    changes = pd.read_sql_query(
+        "SELECT changed_at, field, old_value, new_value FROM listing_changes WHERE listing_id = ? ORDER BY changed_at",
+        conn, params=(listing_id,)
+    )
+    for _, r in changes.iterrows():
+        events.append({'when': r['changed_at'], 'field': r['field'], 'old': r['old_value'], 'new': r['new_value']})
+
+    df = pd.DataFrame(events)
+    if not df.empty:
+        df['when'] = pd.to_datetime(df['when'], errors='coerce', utc=True)
+        df = df.sort_values(by='when', ascending=False)
+    return df
+
 # Calculate price change trends
 def calculate_price_trends(listings_df, prices_df):
     # Group by listing_id and get min, max prices
@@ -202,7 +234,8 @@ def create_price_trend(row):
 
         if history.empty or len(history) <= 1:
             # No history or only one price point
-            return f'<span style="color: {color};">{trend_symbol} {formatted_pct}</span>'
+            return (f'<a href="?history={row.get("id")}" target="_self" '
+                    f'style="color: {color}; text-decoration: none;">{trend_symbol} {formatted_pct}</a>')
         else:
             # Sort the history by date to ensure chronological order
             history = history.sort_values(by='date')
@@ -212,18 +245,33 @@ def create_price_trend(row):
 
             property_id = row.get('id')
 
-            # Create a clean HTML link with proper styling
-            clean_html = f"""<span style="color: {color}; text-decoration: none; font-weight: bold;"
-            >{trend_symbol} {formatted_pct}</span> {price_changes}"""
-
-            # Remove all newlines to prevent them from appearing in the output
-            clean_html = clean_html.replace('\n', ' ').strip()
+            # Link the trend to open the timeline modal via query param
+            clean_html = (
+                f'<a href="?history={property_id}" target="_self" '
+                f'style="color: {color}; text-decoration: none; font-weight: bold;">'
+                f'{trend_symbol} {formatted_pct}</a> {price_changes}'
+            )
             return clean_html
 
     except Exception as e:
         # Return a safe fallback if anything goes wrong
         print(f"Error creating price trend: {e}")
         return "→ 0%"
+
+@st.dialog("Listing timeline")
+def show_timeline_dialog(listing_id, title):
+    st.write(f"**{title}**")
+    df = get_listing_timeline(listing_id)
+    if df.empty:
+        st.info("No recorded changes yet.")
+        return
+    disp = df.copy()
+    disp['when'] = disp['when'].dt.strftime('%Y-%m-%d')
+    disp['change'] = disp['old'].fillna('').astype(str) + ' → ' + disp['new'].fillna('').astype(str)
+    st.dataframe(
+        disp[['when', 'field', 'change']].rename(columns={'when': 'When', 'field': 'What', 'change': 'Change'}),
+        width="stretch", hide_index=True
+    )
 
 # Main application
 def main():
@@ -241,6 +289,19 @@ def main():
     else:
         st.error("No data available. Please make sure the scraper has run at least once.")
         return
+
+    # open the timeline modal if navigated via ?history=<id>
+    hist_param = st.query_params.get("history")
+    if hist_param:
+        try:
+            hist_id = int(hist_param)
+            match = listings_df[listings_df['id'] == hist_id]
+            title = match.iloc[0]['title'] if not match.empty else str(hist_id)
+            show_timeline_dialog(hist_id, title)
+        except (ValueError, TypeError):
+            pass
+        finally:
+            st.query_params.clear()
 
     # Sidebar filters
     st.sidebar.title("Filters")
