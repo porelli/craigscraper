@@ -169,10 +169,12 @@ Expected: prints a `pip-compile, version ...` line.
 - [ ] **Step 2: Compile the lockfile with hashes, upgrading to latest**
 
 ```bash
-/tmp/lockgen/bin/pip-compile --generate-hashes --upgrade \
+/tmp/lockgen/bin/pip-compile --generate-hashes --allow-unsafe --upgrade \
   --output-file requirements.txt requirements.in
 ```
 Expected: writes `requirements.txt`; exit 0.
+
+`--allow-unsafe` is REQUIRED: `setuptools` is a declared top-level dep (imported at runtime via `pkg_resources` in `notifications.py`). Without this flag, pip-compile leaves setuptools unpinned/commented, so the runtime would silently rely on whatever setuptools the base image ships — the exact drift this project eliminates. With the flag, setuptools is pinned and hashed like everything else.
 
 - [ ] **Step 3: Sanity-check the generated lockfile**
 
@@ -419,7 +421,7 @@ Dependencies are locked in `requirements.txt` (generated, hashed) from `requirem
 (loose, human-edited). Never hand-edit `requirements.txt`. To upgrade:
 
 1. install pip-tools in a throwaway env: `python3.14 -m venv /tmp/lock && /tmp/lock/bin/pip install pip-tools`
-2. regenerate the lock: `/tmp/lock/bin/pip-compile --generate-hashes --upgrade requirements.in`
+2. regenerate the lock: `/tmp/lock/bin/pip-compile --generate-hashes --allow-unsafe --upgrade requirements.in`
 3. verify: build the image (`docker build .`) and run a bounded crawl + UI smoke test
 4. commit `requirements.txt` and push (CI rebuilds the image)
 ```
