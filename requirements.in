@@ -1,0 +1,18 @@
+# Top-level dependencies only. This file is human-edited.
+# The pinned, hashed lockfile is requirements.txt, generated with:
+#   pip-compile --generate-hashes --upgrade requirements.in
+# Do not hand-edit requirements.txt.
+
+apprise
+geopy
+itemadapter
+pandas
+plotly
+python-dotenv
+regex_spm
+schedule
+Scrapy
+setuptools
+streamlit
+termcolor
+scrapy-fake-useragent
