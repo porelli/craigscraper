@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
+import os.path
 import apprise
-from pkg_resources import resource_filename
 
 
 class Notifications:
@@ -38,6 +38,6 @@ class Notifications:
                     raise FileNotFoundError('The specified notifications file via CLI does not exist')
             else:
                 # ...if it wasn't, add the default configuration
-                config.add(resource_filename(__name__, 'resources/notifications.yaml'))
+                config.add(os.path.join(os.path.dirname(__file__), 'resources/notifications.yaml'))
 
         self.apobj.add(config)
