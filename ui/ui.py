@@ -101,20 +101,6 @@ def load_prices_data():
 
     return df
 
-# Include this at the beginning of your main function or at the top of the script
-def handle_property_selection():
-    """Process property selection via query parameters or session state"""
-    # This helps with preserving the selected property across refreshes
-    if 'selected_property_id' not in st.session_state:
-        st.session_state.selected_property_id = None
-
-    # Check for URL query parameters (for direct links)
-    params = st.experimental_get_query_params()
-    if 'property_id' in params:
-        st.session_state.selected_property_id = params['property_id'][0]
-        # Redirect to remove the query param to avoid issues with refreshes
-        st.experimental_set_query_params()
-
 # Get price history for a specific listing
 def get_price_history(listing_id):
     conn = get_connection()
@@ -434,7 +420,7 @@ def main():
 
                 # Display only relevant columns
                 display_columns = ['date', 'price', 'price_change', 'price_change_pct']
-                st.dataframe(formatted_history[display_columns], use_container_width=True)
+                st.dataframe(formatted_history[display_columns], width="stretch")
 
                 # Create a price history chart
                 if len(price_history) > 1:
@@ -451,7 +437,7 @@ def main():
                         yaxis=dict(tickprefix="$"),
                         hovermode="x"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
                 # Show additional statistics
                 if len(price_history) > 1:
@@ -490,7 +476,7 @@ def main():
                     title='Price Distribution by Room Count',
                     labels={'rooms': 'Number of Rooms', 'last_price': 'Price ($)'}
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # Price statistics table
                 price_stats = listings_with_trends.groupby('rooms').agg(
@@ -525,7 +511,7 @@ def main():
                             'stable': 'gray'
                         }
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
             else:
                 st.warning("Not enough data to display price distribution.")
 
@@ -553,7 +539,7 @@ def main():
                     labels={'last_price': 'Price ($)', 'count': 'Number of Properties'},
                     nbins=20
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # Time on market analysis
                 if 'posted_on' in rented_df.columns and 'last_updated' in rented_df.columns:
@@ -565,7 +551,7 @@ def main():
                         title='Days on Market by Room Count',
                         labels={'rooms': 'Number of Rooms', 'days_on_market': 'Days on Market'}
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
                     # Average days on market
                     avg_days = rented_df.groupby('rooms')['days_on_market'].mean().round(1).reset_index()
