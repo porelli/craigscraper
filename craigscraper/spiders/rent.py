@@ -1,4 +1,6 @@
 import scrapy
+from scrapy import signals
+from scrapy.exceptions import CloseSpider
 from datetime import datetime
 import geopy.distance
 import regex_spm
@@ -38,13 +40,24 @@ class RentSpider(scrapy.Spider):
 
     # regex to extract availability date from description
     availability_pattern = re.compile(r'^[^\n]*(available|availability|avail)[^\n]*(?P<now>now|immediately|immediate)|((?P<month_long>(January|February|March|April|May|June|July|August|September|October|November|December))|(?P<month_short>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))[\s,]+(?P<day>\d{,2}|)[^\n]*$', flags=re.IGNORECASE | re.MULTILINE)
-    # regex to extract id from url
-    id_pattern = re.compile(r'(?P<id>\d+).html$', flags=re.IGNORECASE)
+    # regex to extract the numeric post id from the listing page body ("post id: 1234567890")
+    post_id_pattern = re.compile(r'post id:\s*(?P<id>\d+)', flags=re.IGNORECASE)
     # regex to extract size from title and description
     size_pattern = re.compile(r'(?P<size>\d+)sqft', flags=re.IGNORECASE)
 
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super(RentSpider, cls).from_crawler(crawler, *args, **kwargs)
+        # get notified when the scrape breaks instead of failing silently
+        crawler.signals.connect(spider.on_spider_error, signal=signals.spider_error)
+        crawler.signals.connect(spider.on_spider_closed, signal=signals.spider_closed)
+        return spider
+
     def __init__(self, notifications_file=None, *args, **kwargs):
         super(RentSpider, self).__init__(*args, **kwargs)
+
+        # set to True once a breaking-change notification has been sent this run (avoid duplicates)
+        self.breaking_change_notified = False
 
         # initialize notifications
         self.notifications = Notifications(notifications_file)
@@ -69,11 +82,42 @@ class RentSpider(scrapy.Spider):
         # initialize utils
         self.utils = SharedUtils()
 
+    def notify_breaking_change(self, reason):
+        # alert the user that Craigslist likely changed something and the scraper needs attention.
+        # deduplicated so a page-structure change affecting many listings sends a single alert.
+        if self.breaking_change_notified:
+            return
+        self.breaking_change_notified = True
+        print(colored('POSSIBLE BREAKING CHANGE DETECTED: %s' % reason, 'red'))
+        self.notifications.apobj.notify(
+            title = '⚠️ Craigscraper may be broken',
+            body  = (
+                'The scraper hit an unexpected problem, likely because Craigslist changed '
+                'its page structure. New apartments will NOT be detected until this is fixed.\n\n'
+                'Details: %s' % reason
+            ),
+        )
+
+    def on_spider_error(self, failure, response, spider):
+        # any uncaught exception raised while parsing a page (e.g. a selector that no longer matches)
+        url = getattr(response, 'url', 'unknown URL')
+        self.notify_breaking_change('error while parsing %s: %s' % (url, repr(failure.value)))
+
+    def on_spider_closed(self, spider, reason):
+        # CloseSpider(...) raised by our structural guards surfaces here as the close reason
+        if reason not in ('finished', 'shutdown'):
+            self.notify_breaking_change('crawl stopped early (reason: %s)' % reason)
+
     def parse(self, response):
         links_to_examinate = []
 
         cl_data = {} # stores a dictionary of listing on CL to dictionary "link: price"
         cl_links = [] # stores all the links of current listings to avoid extracting keys in a second stage
+
+        # detect a structural change of the search results page: if the container is
+        # missing entirely, Craigslist changed the layout and we must not fail silently
+        if not response.css('.cl-static-search-results'):
+            raise CloseSpider('search results container (.cl-static-search-results) not found — Craigslist may have changed its page structure')
 
         for property in response.css('.cl-static-search-results li')[1:]:
             # title = property.css('li::attr(title)').extract()
@@ -97,10 +141,10 @@ class RentSpider(scrapy.Spider):
         common_list = list(set(cl_links).intersection(db_links))
         for listing in common_list:
             if db_data[listing] == cl_data[listing]:
-                print(colored('Apartment %s already fetched and price ($%s) is unchanged: %s'%(self.get_id(listing), db_data[listing], listing), 'green'))
+                print(colored('Apartment %s already fetched and price ($%s) is unchanged: %s'%(self.get_slug(listing), db_data[listing], listing), 'green'))
             else:
                 links_to_examinate.append(listing)
-                print(colored('Apartment %s already fetched but price ($%s) is changed to $%s: %s'%(self.get_id(listing), db_data[listing], cl_data[listing], listing), 'yellow'))
+                print(colored('Apartment %s already fetched but price ($%s) is changed to $%s: %s'%(self.get_slug(listing), db_data[listing], cl_data[listing], listing), 'yellow'))
 
         # listings only on db -> update as still_published = 'False'
         cursor.execute('SELECT link, last_price FROM listings WHERE still_published = \'True\' AND link NOT IN (%s)' %','.join('?'*len(cl_links)), cl_links)
@@ -115,7 +159,7 @@ class RentSpider(scrapy.Spider):
         only_cl_list = list(set(cl_links) - set(db_links))
         for listing in only_cl_list:
             links_to_examinate.append(listing)
-            print(colored('Apartment %s ($%s) is new: %s'%(self.get_id(listing), cl_data[listing], listing), 'cyan'))
+            print(colored('Apartment %s ($%s) is new: %s'%(self.get_slug(listing), cl_data[listing], listing), 'cyan'))
 
         # continue scraping the links
         for link in links_to_examinate:
@@ -128,7 +172,7 @@ class RentSpider(scrapy.Spider):
         item['description'] = ' '.join(response.css('section#postingbody::text').getall()).strip()
         item['title'] = response.xpath("//meta[@property='og:title']/@content").extract_first().removesuffix('- craigslist')
         item['link'] = response.xpath("//meta[@property='og:url']/@content").extract_first()
-        item['id'] = self.get_id(item['link'])
+        item['id'] = self.get_id(response)
         geo = tuple(response.xpath("//meta[@name='ICBM']/@content").extract_first().split(', '))
         item['lat'] = geo[0]
         item['lon'] = geo[1]
@@ -211,10 +255,17 @@ class RentSpider(scrapy.Spider):
 
         yield item
 
-    def get_id(self, link):
-        id_search = self.id_pattern.search(link)
+    def get_id(self, response):
+        # the numeric post id lives in the listing page body ("post id: 1234567890").
+        # it stays stable across URL/layout changes, so we keep it as the DB primary key.
+        body_text = ' '.join(response.css('.postinginfos ::text').getall())
+        id_search = self.post_id_pattern.search(body_text)
 
-        if id_search.group('id'):
+        if id_search:
             return int(id_search.group('id'))
         else:
-            raise 'Cannot find ID! Something has changed...'
+            raise CloseSpider('post id not found on listing page — Craigslist may have changed its page structure')
+
+    def get_slug(self, link):
+        # human-friendly identifier for logs, derived from the listing URL (last path segment)
+        return link.rstrip('/').rsplit('/', 1)[-1]

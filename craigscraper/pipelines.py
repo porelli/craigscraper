@@ -71,52 +71,60 @@ class CraigscraperPipeline:
         self.cur.execute(f"PRAGMA table_info({table_name});")
         existing_columns = {column[1] for column in self.cur.fetchall()}
 
-        # Columns that can be backfilled
+        # Columns that can be recomputed from description/attributes
         reprocessable_columns = ['pool', 'gym', 'parking', 'ev_charging']
-        utils = SharedUtils()
-        # Set row to be returned as dictionary
-        self.con.row_factory = sqlite3.Row
-        # Create a temporary cursor with the new setting
-        special_cur = self.con.cursor()
-        # Switch back row select to normal behaviour
-        self.con.row_factory = None
 
         # Add missing columns
         for column in columns:
             column_name = column.split()[0]
             if column_name not in existing_columns:
                 alter_statement = f"ALTER TABLE {table_name} ADD COLUMN {column}"
-                special_cur.execute(alter_statement)
+                self.cur.execute(alter_statement)
                 print(colored(f"Added missing column: {column_name}", 'green'))
-                if column_name in reprocessable_columns:
-                    print(colored(f"Re-processing old data...", 'cyan'))
-
-                    special_cur.execute(
-                        f"""SELECT *
-                        FROM {table_name}
-                        WHERE {column_name} IS NULL"""
-                    )
-                    rows = special_cur.fetchall()
-
-                    for row in rows:
-                        id = row['id']
-                        # we expect attributes to be a list
-                        item = dict(row)
-                        item['attributes'] = row['attributes'].split(',')
-                        new_value = utils.findFeature(column_name, row)
-
-                        if new_value is not None:  # Only update if new_value is valid
-                            self.con.execute(
-                                f"""UPDATE {table_name}
-                                SET {column_name} = ?
-                                WHERE id = ?""", (new_value, id)
-                            )
-
-                    print(colored(f"Old data has been re-processed. Updated rows: {len(rows)}", 'green'))
-                else:
-                    print(colored(f"Old data cannot be re-processed for this column.", 'red'))
 
         self.con.commit()
+
+        # Backfill any reprocessable columns that still hold NULL values. This runs on
+        # every startup but is idempotent: once every row is populated the SELECT matches
+        # nothing, so it's a cheap no-op. It also repairs rows a past bug left as NULL.
+        wanted_columns = {c.split()[0] for c in columns}
+        for column_name in reprocessable_columns:
+            if column_name in wanted_columns:
+                self.backfill_null_column(table_name, column_name)
+
+    def backfill_null_column(self, table_name, column_name):
+        utils = SharedUtils()
+
+        # fetch rows as dictionaries so we can rebuild the item shape findFeature expects
+        self.con.row_factory = sqlite3.Row
+        special_cur = self.con.cursor()
+        self.con.row_factory = None
+
+        special_cur.execute(
+            f"SELECT id, description, attributes FROM {table_name} WHERE {column_name} IS NULL"
+        )
+        rows = special_cur.fetchall()
+        if not rows:
+            return
+
+        print(colored(f"Backfilling '{column_name}' for {len(rows)} row(s)...", 'cyan'))
+        updated = 0
+        for row in rows:
+            item = {
+                'description': row['description'] or '',
+                # attributes are stored as a ', '-joined string; findFeature expects a list
+                'attributes': (row['attributes'] or '').split(', '),
+            }
+            new_value = utils.findFeature(column_name, item)
+            if new_value is not None:  # Only update if new_value is valid
+                self.con.execute(
+                    f"UPDATE {table_name} SET {column_name} = ? WHERE id = ?",
+                    (new_value, row['id'])
+                )
+                updated += 1
+
+        self.con.commit()
+        print(colored(f"Backfill complete for '{column_name}'. Updated rows: {updated}", 'green'))
 
     def create_indexes_if_not_exist(self):
         self.cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS listings_ids ON listings(id)""")
@@ -126,8 +134,8 @@ class CraigscraperPipeline:
     def process_item(self, item, spider):
         # insert or replace if unique index(s) (id OR link) are violated deleting previous row
         self.cur.execute("""INSERT or REPLACE into listings
-                            (id, link, rooms, available_on, size, attributes, description, title, gym, pool, parking, distance, last_price, last_updated, posted_on, still_published) VALUES
-                            (?,  ?,    ?,     ?,            ?,    ?,          ?,           ?,     ?,   ?,    ?,       ?,        ?,          ?,            ?,         ?)""",
+                            (id, link, rooms, available_on, size, attributes, description, title, gym, pool, parking, ev_charging, distance, last_price, last_updated, posted_on, still_published) VALUES
+                            (?,  ?,    ?,     ?,            ?,    ?,          ?,           ?,     ?,   ?,    ?,       ?,           ?,        ?,          ?,            ?,         ?)""",
                          (
                              item['id'],
                              item['link'],
@@ -140,6 +148,7 @@ class CraigscraperPipeline:
                              item['gym'],
                              item['pool'],
                              item['parking'],
+                             item['ev_charging'],
                              item['distance'],
                              item['price'],
                              item['last_updated'],
