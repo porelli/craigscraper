@@ -15,6 +15,7 @@
 - `requirements.txt` is a **generated lockfile** — never hand-edited after Task 3.
 - Lockfile MUST be generated with `--generate-hashes`; Dockerfile MUST install with `--require-hashes`.
 - The manual Twisted / pyOpenSSL / cryptography / service-identity pins added during the incident fix are **removed** from the top-level list (Scrapy 2.17 resolves compatible versions).
+- **`setuptools` is NOT a dependency.** Latest setuptools (83.x) removed `pkg_resources`, which `notifications.py` imported. That call is modernized to a stdlib path lookup, so setuptools is dropped from `requirements.in` entirely and does not appear in the lock. (This supersedes the earlier `--allow-unsafe`/`setuptools<70` approaches — neither is used.)
 - Do NOT deploy until BOTH the crawler live-crawl and the UI 3-tab smoke test pass on Python 3.14.
 - Before recreating the production container, back up `/datablind/containers-volumes/craigscraper/rents.db` on host `hpmini600g2` with `sudo cp`.
 - Verify commands run in a Python 3.14 venv (`python3.14` is available locally).
@@ -42,7 +43,7 @@
 
 - [ ] **Step 1: Determine the true top-level deps**
 
-The app imports these (from `craigscraper/`, `ui/ui.py`, `notifications.py`, `main.py`): scrapy, apprise, geopy, itemadapter, pandas, plotly, python-dotenv, regex_spm, schedule, streamlit, termcolor, scrapy-fake-useragent, setuptools. The incident-fix pins (Twisted, pyOpenSSL, cryptography, service-identity) are transitive → NOT listed here.
+The app imports these (from `craigscraper/`, `ui/ui.py`, `notifications.py`, `main.py`): scrapy, apprise, geopy, itemadapter, pandas, plotly, python-dotenv, regex_spm, schedule, streamlit, termcolor, scrapy-fake-useragent. The incident-fix pins (Twisted, pyOpenSSL, cryptography, service-identity) are transitive → NOT listed here. `setuptools` is NOT listed either — see Global Constraints (its only use, `pkg_resources` in notifications.py, is modernized away).
 
 - [ ] **Step 2: Write `requirements.in`**
 
@@ -61,7 +62,6 @@ python-dotenv
 regex_spm
 schedule
 Scrapy
-setuptools
 streamlit
 termcolor
 scrapy-fake-useragent
@@ -148,6 +148,71 @@ git commit -m "fix(ui) remove dead experimental query-param code and deprecated 
 
 ---
 
+## Task 2b: Modernize `notifications.py` off `pkg_resources`
+
+**Files:**
+- Modify: `notifications.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: a `notifications.py` that resolves its bundled default config without `pkg_resources`/setuptools. This lets setuptools be dropped as a dependency (Task 1 already omits it) so the whole stack can go to latest.
+
+**Why:** Latest setuptools (83.x) removed `pkg_resources`. `notifications.py:5` does `from pkg_resources import resource_filename` and line ~41 calls `resource_filename(__name__, 'resources/notifications.yaml')` to locate the bundled default apprise config. The file lives at `resources/notifications.yaml` relative to the repo root (next to `notifications.py`). Replace with a stdlib path lookup.
+
+- [ ] **Step 1: Replace the import**
+
+Change line 5 from:
+```python
+from pkg_resources import resource_filename
+```
+to:
+```python
+import os.path
+```
+
+- [ ] **Step 2: Replace the call**
+
+Change the call (around line 41) from:
+```python
+                config.add(resource_filename(__name__, 'resources/notifications.yaml'))
+```
+to:
+```python
+                config.add(os.path.join(os.path.dirname(__file__), 'resources/notifications.yaml'))
+```
+
+- [ ] **Step 3: Verify no pkg_resources references remain**
+
+Run:
+```bash
+grep -n "pkg_resources\|resource_filename" notifications.py
+```
+Expected: no output.
+
+- [ ] **Step 4: Verify the path resolves to the real bundled file, on a setuptools-free interpreter**
+
+The default-config branch only runs when neither `NOTIFICATION_FILE` env nor a CLI file is given. Confirm the computed path points at the existing `resources/notifications.yaml`:
+```bash
+python3.14 -c "import os.path; p=os.path.join(os.path.dirname(os.path.abspath('notifications.py')), 'resources/notifications.yaml'); print(p, os.path.isfile(p))"
+```
+Expected: prints the absolute path and `True`.
+
+- [ ] **Step 5: Byte-compile**
+
+```bash
+python3.14 -m py_compile notifications.py && echo "OK"
+```
+Expected: `OK`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add notifications.py
+git commit -m "refactor(notify) use stdlib path instead of pkg_resources for default config"
+```
+
+---
+
 ## Task 3: Generate the hashed lockfile on Python 3.14
 
 **Files:**
@@ -169,12 +234,10 @@ Expected: prints a `pip-compile, version ...` line.
 - [ ] **Step 2: Compile the lockfile with hashes, upgrading to latest**
 
 ```bash
-/tmp/lockgen/bin/pip-compile --generate-hashes --allow-unsafe --upgrade \
+/tmp/lockgen/bin/pip-compile --generate-hashes --upgrade \
   --output-file requirements.txt requirements.in
 ```
-Expected: writes `requirements.txt`; exit 0.
-
-`--allow-unsafe` is REQUIRED: `setuptools` is a declared top-level dep (imported at runtime via `pkg_resources` in `notifications.py`). Without this flag, pip-compile leaves setuptools unpinned/commented, so the runtime would silently rely on whatever setuptools the base image ships — the exact drift this project eliminates. With the flag, setuptools is pinned and hashed like everything else.
+Expected: writes `requirements.txt`; exit 0. (No `--allow-unsafe` needed — setuptools is not a dependency; see Task 2b and Global Constraints.)
 
 - [ ] **Step 3: Sanity-check the generated lockfile**
 
@@ -421,7 +484,7 @@ Dependencies are locked in `requirements.txt` (generated, hashed) from `requirem
 (loose, human-edited). Never hand-edit `requirements.txt`. To upgrade:
 
 1. install pip-tools in a throwaway env: `python3.14 -m venv /tmp/lock && /tmp/lock/bin/pip install pip-tools`
-2. regenerate the lock: `/tmp/lock/bin/pip-compile --generate-hashes --allow-unsafe --upgrade requirements.in`
+2. regenerate the lock: `/tmp/lock/bin/pip-compile --generate-hashes --upgrade requirements.in`
 3. verify: build the image (`docker build .`) and run a bounded crawl + UI smoke test
 4. commit `requirements.txt` and push (CI rebuilds the image)
 ```
