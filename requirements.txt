@@ -7,6 +7,12 @@ python-dotenv==1.0.1
 regex_spm==1.0.0
 schedule==1.2.2
 Scrapy==2.12.0
+# Twisted (a Scrapy dependency) is pinned: newer releases removed
+# twisted.internet._sslverify._setAcceptableProtocols, which Scrapy 2.12.0 imports.
+Twisted==24.11.0
+pyOpenSSL==25.0.0
+cryptography==44.0.2
+service-identity==24.2.0
 setuptools==75.8.2
 streamlit==1.43.2
 termcolor==2.5.0
