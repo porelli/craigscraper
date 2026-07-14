@@ -40,6 +40,25 @@ Scan (and monitor) Craigslist for new apartments within the defined parameters.
 - specify the scan interval in the .env file using ```MINUTES_INTERVAL```
 - run: ```python3 main.py```
 
+### Updating dependencies
+
+Dependencies are locked in `requirements.txt` (generated, hashed) from `requirements.in`
+(loose, human-edited). Never hand-edit `requirements.txt`. To upgrade:
+
+1. regenerate the lock **inside a Linux python:3.14 container** (required — see note below):
+   ```
+   docker run --rm -v "$PWD":/app -w /app python:3.14 sh -c \
+     "pip install -q --upgrade pip pip-tools && \
+      pip-compile --generate-hashes --upgrade --output-file requirements.txt requirements.in"
+   ```
+2. verify: build the image (`docker build .`) and run a bounded crawl + UI smoke test
+3. commit `requirements.txt` and push (CI rebuilds the image)
+
+**Why in a container:** pip-tools 7.x has no universal-lock mode, so it pins for the platform
+it runs on. Some deps are platform-gated (e.g. `watchdog`, which streamlit needs only on
+non-macOS). Generating the lock on macOS omits them and the Linux image build then fails the
+`--require-hashes` install. Always generate on Linux, matching the deploy target.
+
 ## Caveats (PRs are welcome!)
 - currently it works only for Vancouver, BC
 - code is not very organized and does not follow all the scrapy best practices
