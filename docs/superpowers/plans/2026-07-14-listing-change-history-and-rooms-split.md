@@ -563,6 +563,117 @@ git commit -m "feat(ui) timeline modal on price arrow showing price and field-ch
 
 ---
 
+## Task 4b: UI — surface bedrooms/bathrooms columns + numeric filters
+
+**Files:**
+- Modify: `ui/ui.py`
+
+**Interfaces:**
+- Consumes: `listings.bedrooms`, `listings.bathrooms`, `listings.bathrooms_type` (populated by Task 2/3; `load_listings_data` already does `SELECT *` so they're in the DataFrame).
+- Produces: no new consumers.
+
+**Why:** The DB now has parsed room columns, but the UI still shows and filters the raw `rooms` text. This task surfaces the split: separate Bedrooms/Bathrooms table columns and numeric range filters replacing the raw-rooms multiselect. Also fixes a crash Playwright surfaced: the price slider raises `StreamlitAPIException` when `min_price == max_price` (only one price after filtering) — this bites in production when a narrow filter yields a single listing.
+
+- [ ] **Step 1: Fix the price slider min==max crash**
+
+Replace the price-range slider block (currently ~lines 313-320) so it degrades gracefully when min==max:
+
+```python
+    # Price range filter
+    min_price = int(listings_df['last_price'].min()) if not listings_df.empty else 0
+    max_price = int(listings_df['last_price'].max()) if not listings_df.empty else 5000
+    if min_price >= max_price:
+        # a slider requires min < max; with a single distinct price there's nothing to range over
+        st.sidebar.write(f"Price: ${min_price:,}")
+        price_range = (min_price, max_price)
+    else:
+        price_range = st.sidebar.slider(
+            "Price Range",
+            min_price,
+            max_price,
+            (min_price, max_price)
+        )
+```
+
+- [ ] **Step 2: Replace the rooms multiselect with numeric bedroom/bathroom filters**
+
+Replace the "Room filter" block (currently ~lines 322-329, the `available_rooms`/`selected_rooms` multiselect):
+
+```python
+    # Bedroom / bathroom filters (numeric, from the parsed columns)
+    bed_vals = sorted(v for v in listings_df['bedrooms'].dropna().unique())
+    bath_vals = sorted(v for v in listings_df['bathrooms'].dropna().unique())
+    selected_beds = st.sidebar.multiselect(
+        "Bedrooms",
+        options=bed_vals,
+        default=bed_vals,
+        format_func=lambda x: f"{int(x)}" if float(x).is_integer() else f"{x}"
+    )
+    selected_baths = st.sidebar.multiselect(
+        "Bathrooms",
+        options=bath_vals,
+        default=bath_vals,
+        format_func=lambda x: f"{int(x)}" if float(x).is_integer() else f"{x}"
+    )
+```
+
+- [ ] **Step 3: Update the filter application**
+
+Replace the `selected_rooms` application (currently ~lines 351-352):
+
+```python
+    if selected_beds:
+        filtered_df = filtered_df[filtered_df['bedrooms'].isin(selected_beds)]
+    if selected_baths:
+        filtered_df = filtered_df[filtered_df['bathrooms'].isin(selected_baths)]
+```
+
+(This filters on bathrooms numerically; rows with `bathrooms_type` set — split/shared — have NULL bathrooms and are handled by keeping them when the bathrooms filter is at its default full selection. Since NaN is never `.isin(...)`, note in a comment that split/shared bathrooms are excluded when the bathrooms filter is narrowed; acceptable given they're <0.1% of data.)
+
+- [ ] **Step 4: Show Bedrooms/Bathrooms columns in the table**
+
+In the `columns_to_display` list (~line 396) replace `'rooms'` with `'bedrooms', 'bathrooms'`:
+
+```python
+            columns_to_display = [
+                'clickable_title', 'bedrooms', 'bathrooms', 'size', 'last_price', 'price_trend',
+                'available_on', 'posted_on', 'distance', 'gym', 'pool', 'parking', 'ev_charging'
+            ]
+```
+
+And in the `.rename(...)` map, replace the `'rooms': 'Rooms',` entry with:
+
+```python
+                'bedrooms': 'Bedrooms',
+                'bathrooms': 'Bathrooms',
+```
+
+- [ ] **Step 5: Compile-check**
+
+```bash
+python3.14 -m py_compile ui/ui.py && echo OK
+```
+Expected: `OK`.
+
+- [ ] **Step 6: Visual verification with Playwright (seeded multi-listing DB)**
+
+Seed 3 listings with varied prices AND a single-price scenario check, launch the UI, and drive it:
+- Confirm the table shows separate **Bedrooms** and **Bathrooms** columns (not the raw `1BR / 1Ba`).
+- Confirm the sidebar shows **Bedrooms** and **Bathrooms** numeric filters (not "Number of Rooms").
+- Confirm no `StreamlitAPIException` renders (check via `browser_snapshot` for an `alert`/`StreamlitAPIException`, not just HTTP 200 — the slider bug proved HTTP 200 can hide an in-page exception).
+- Take a screenshot and confirm visually.
+
+Use the seed + launch + Playwright navigate/snapshot/screenshot pattern from Task 4 Step 6. If Playwright MCP is unavailable, fall back to `browser`-free curl + grep the rendered HTML for "StreamlitAPIException" and for the "Bedrooms" column header.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add ui/ui.py
+git commit -m "feat(ui) show bedrooms/bathrooms columns and numeric filters; fix price slider min==max crash"
+```
+
+---
+
 ## Task 5: End-to-end verification (pre-deploy gate)
 
 **Files:** none modified — verification only.
