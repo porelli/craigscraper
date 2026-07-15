@@ -312,19 +312,32 @@ def main():
     # Price range filter
     min_price = int(listings_df['last_price'].min()) if not listings_df.empty else 0
     max_price = int(listings_df['last_price'].max()) if not listings_df.empty else 5000
-    price_range = st.sidebar.slider(
-        "Price Range",
-        min_price,
-        max_price,
-        (min_price, max_price)
-    )
+    if min_price >= max_price:
+        # a slider requires min < max; with a single distinct price there's nothing to range over
+        st.sidebar.write(f"Price: ${min_price:,}")
+        price_range = (min_price, max_price)
+    else:
+        price_range = st.sidebar.slider(
+            "Price Range",
+            min_price,
+            max_price,
+            (min_price, max_price)
+        )
 
-    # Room filter
-    available_rooms = sorted(listings_df['rooms'].unique().tolist())
-    selected_rooms = st.sidebar.multiselect(
-        "Number of Rooms",
-        options=available_rooms,
-        default=available_rooms
+    # Bedroom / bathroom filters (numeric, from the parsed columns)
+    bed_vals = sorted(v for v in listings_df['bedrooms'].dropna().unique())
+    bath_vals = sorted(v for v in listings_df['bathrooms'].dropna().unique())
+    selected_beds = st.sidebar.multiselect(
+        "Bedrooms",
+        options=bed_vals,
+        default=bed_vals,
+        format_func=lambda x: f"{int(x)}" if float(x).is_integer() else f"{x}"
+    )
+    selected_baths = st.sidebar.multiselect(
+        "Bathrooms",
+        options=bath_vals,
+        default=bath_vals,
+        format_func=lambda x: f"{int(x)}" if float(x).is_integer() else f"{x}"
     )
 
     # Features filter
@@ -348,8 +361,10 @@ def main():
         (filtered_df['last_price'] <= price_range[1])
     ]
 
-    if selected_rooms:
-        filtered_df = filtered_df[filtered_df['rooms'].isin(selected_rooms)]
+    if selected_beds:
+        filtered_df = filtered_df[filtered_df['bedrooms'].isin(selected_beds)]
+    if selected_baths:
+        filtered_df = filtered_df[filtered_df['bathrooms'].isin(selected_baths)]
 
     if has_gym:
         filtered_df = filtered_df[filtered_df['gym'] == True]
@@ -393,13 +408,14 @@ def main():
 
             # Select columns to display
             columns_to_display = [
-                'clickable_title', 'rooms', 'size', 'last_price', 'price_trend',
+                'clickable_title', 'bedrooms', 'bathrooms', 'size', 'last_price', 'price_trend',
                 'available_on', 'posted_on', 'distance', 'gym', 'pool', 'parking', 'ev_charging'
             ]
 
             display_df = display_df[columns_to_display].rename(columns={
                 'last_price': 'Price',
-                'rooms': 'Rooms',
+                'bedrooms': 'Bedrooms',
+                'bathrooms': 'Bathrooms',
                 'size': 'Size',
                 'available_on': 'Available On',
                 'posted_on': 'Posted On',
