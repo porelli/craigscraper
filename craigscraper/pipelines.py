@@ -73,6 +73,38 @@ class CraigscraperPipeline:
         self.con.commit()
 
         self.backfill_rooms()
+        self.purge_consecutive_duplicate_prices()
+
+    def purge_consecutive_duplicate_prices(self):
+        # One-time cleanup: older data recorded a new prices row whenever `last_updated`
+        # changed even if the price didn't, leaving consecutive same-price rows that render
+        # as fake "$X -> $X" changes. Delete each price row whose price equals the
+        # chronologically-previous row's price for the same listing. Idempotent: once clean,
+        # it deletes nothing. Real round-trips (2000->2100->2000) are preserved because only
+        # rows equal to their immediate predecessor are removed.
+        self.con.row_factory = sqlite3.Row
+        cur = self.con.cursor()
+        self.con.row_factory = None
+
+        cur.execute("SELECT rowid, listing_id, last_updated, price FROM prices ORDER BY listing_id, last_updated")
+        rows = cur.fetchall()
+        to_delete = []
+        prev_listing = None
+        prev_price = None
+        for r in rows:
+            if r['listing_id'] == prev_listing and r['price'] == prev_price:
+                to_delete.append(r['rowid'])
+            else:
+                prev_listing = r['listing_id']
+                prev_price = r['price']
+
+        if not to_delete:
+            return
+
+        print(colored(f"Purging {len(to_delete)} consecutive-duplicate price row(s)...", 'cyan'))
+        cur.executemany("DELETE FROM prices WHERE rowid = ?", [(rid,) for rid in to_delete])
+        self.con.commit()
+        print(colored(f"Price dedup complete. Deleted rows: {len(to_delete)}", 'green'))
 
     def create_table_if_not_exists(self, table_name, columns, constraints=None):
         # Create table if it doesn't exist
@@ -228,14 +260,21 @@ class CraigscraperPipeline:
                          )
         )
 
-        # insert or ignore if unique index(s) (listing_id AND last_updated AND price) are violated deleting previous row
-        self.cur.execute("""INSERT OR IGNORE INTO prices (listing_id, last_updated, price) VALUES (?, ?, ?)""",
-                         (
-                             item['id'],
-                             item['last_updated'],
-                             item['price']
-                         )
+        # Record a price row only when the price actually differs from this listing's most
+        # recent recorded price. Craigslist bumps `last_updated` on re-posts without a price
+        # change, and the old UNIQUE(listing_id, last_updated, price) constraint let those
+        # through as duplicate-price rows (rendering as fake "$X -> $X" changes). Comparing
+        # against only the latest price still captures real round-trips (2000->2100->2000).
+        self.cur.execute(
+            "SELECT price FROM prices WHERE listing_id = ? ORDER BY last_updated DESC LIMIT 1",
+            (item['id'],)
         )
+        latest = self.cur.fetchone()
+        if latest is None or latest[0] != item['price']:
+            self.cur.execute(
+                "INSERT OR IGNORE INTO prices (listing_id, last_updated, price) VALUES (?, ?, ?)",
+                (item['id'], item['last_updated'], item['price'])
+            )
 
         self.con.commit()
 

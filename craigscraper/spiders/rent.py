@@ -104,8 +104,12 @@ class RentSpider(scrapy.Spider):
         self.notify_breaking_change('error while parsing %s: %s' % (url, repr(failure.value)))
 
     def on_spider_closed(self, spider, reason):
-        # CloseSpider(...) raised by our structural guards surfaces here as the close reason
-        if reason not in ('finished', 'shutdown'):
+        # CloseSpider(...) raised by our structural guards surfaces here as the close reason.
+        # 'finished'/'shutdown' are normal; 'closespider_itemcount' is a benign bounded-test
+        # stop. Anything else (e.g. our structural-guard CloseSpider, closespider_errorcount)
+        # is a real problem worth alerting on.
+        benign_reasons = ('finished', 'shutdown', 'closespider_itemcount')
+        if reason not in benign_reasons:
             self.notify_breaking_change('crawl stopped early (reason: %s)' % reason)
 
     def parse(self, response):
@@ -231,7 +235,7 @@ class RentSpider(scrapy.Spider):
                     if month_short:
                         available_on = available_on.replace(month=datetime.strptime(month_short, '%b').month)
                     if day:
-                        available_on = available_on.replace(day=datetime.strptime(day, '%d').month)
+                        available_on = available_on.replace(day=int(day))
                     if abs(available_on.month - datetime.now().month) < 3: # TODO: this still causes issues and sets listings in the future
                         available_on = available_on.replace(year=(datetime.now().year + 1))
                     else:

@@ -104,13 +104,13 @@ def load_prices_data():
 # Get price history for a specific listing
 def get_price_history(listing_id):
     conn = get_connection()
-    query = f"""
+    query = """
     SELECT last_updated, price
     FROM prices
-    WHERE listing_id = '{listing_id}'
+    WHERE listing_id = ?
     ORDER BY last_updated
     """
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=(listing_id,))
     df['last_updated'] = pd.to_datetime(df['last_updated'], errors='coerce', utc=True)
     return df
 
@@ -240,8 +240,15 @@ def create_price_trend(row):
             # Sort the history by date to ensure chronological order
             history = history.sort_values(by='date')
 
+            # Collapse consecutive identical prices so unchanged re-scrapes don't render
+            # as fake steps (e.g. $2,160→$2,160). Keeps only real transitions.
+            collapsed = []
+            for p in history['price']:
+                if not collapsed or collapsed[-1] != p:
+                    collapsed.append(p)
+
             # Format price history as a chronological string: price1->price2->price3
-            price_changes = "→".join([f"${p:,.0f}" for p in history['price']])
+            price_changes = "→".join([f"${p:,.0f}" for p in collapsed])
 
             property_id = row.get('id')
 
