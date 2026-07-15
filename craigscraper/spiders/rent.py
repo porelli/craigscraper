@@ -235,7 +235,14 @@ class RentSpider(scrapy.Spider):
                     if month_short:
                         available_on = available_on.replace(month=datetime.strptime(month_short, '%b').month)
                     if day:
-                        available_on = available_on.replace(day=int(day))
+                        # day comes from free-text descriptions and may be out of range
+                        # (e.g. "Feb 31", "0"); use it only when it's a valid day-of-month,
+                        # otherwise keep the month's default day rather than crash parseItem.
+                        day_num = int(day)
+                        try:
+                            available_on = available_on.replace(day=day_num)
+                        except ValueError:
+                            pass
                     if abs(available_on.month - datetime.now().month) < 3: # TODO: this still causes issues and sets listings in the future
                         available_on = available_on.replace(year=(datetime.now().year + 1))
                     else:
