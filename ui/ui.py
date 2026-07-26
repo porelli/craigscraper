@@ -113,10 +113,13 @@ def load_prices_data():
 
 @st.cache_data(ttl=300)
 def load_price_months():
-    # one row per price point: month, bedrooms, price (joined to the listing's bedroom count)
+    # one row per price point: month, bedrooms, price (joined to the listing's bedroom count).
+    # Timestamps are stored ISO-8601 with a 'T' and tz offset (e.g. 2025-02-16T12:00:53-0800),
+    # which SQLite strftime() CANNOT parse (returns NULL). substr(...,1,7) extracts 'YYYY-MM'
+    # directly from the ISO string, which is correct for that fixed layout.
     conn = get_connection()
     query = """
-    SELECT strftime('%Y-%m', p.last_updated) AS month, l.bedrooms AS bedrooms, p.price AS price
+    SELECT substr(p.last_updated, 1, 7) AS month, l.bedrooms AS bedrooms, p.price AS price
     FROM prices p
     JOIN listings l ON l.id = p.listing_id
     WHERE l.bedrooms IS NOT NULL AND p.price IS NOT NULL
@@ -125,11 +128,13 @@ def load_price_months():
 
 @st.cache_data(ttl=300)
 def load_posted_and_dom():
-    # posted month (for new-listings) and approximate days-on-market per listing
+    # posted month (for new-listings) and approximate days-on-market per listing.
+    # substr(...,1,7) is used instead of strftime() because the ISO-8601 timestamps with a
+    # 'T'/tz offset are not parseable by SQLite's date functions (see load_price_months).
     conn = get_connection()
     query = """
-    SELECT strftime('%Y-%m', posted_on) AS posted_month,
-           strftime('%Y-%m', last_updated) AS last_month,
+    SELECT substr(posted_on, 1, 7) AS posted_month,
+           substr(last_updated, 1, 7) AS last_month,
            posted_on, last_updated
     FROM listings
     WHERE posted_on IS NOT NULL
