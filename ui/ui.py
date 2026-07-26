@@ -5,6 +5,13 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 import os
+import sys
+
+# `streamlit run ui/ui.py` puts this script's directory (ui/) on sys.path, NOT the repo root,
+# so the craigscraper package isn't importable by default. Add the repo root (this file's
+# parent's parent) so the import works regardless of the launch directory (incl. the container).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from craigscraper.market_analysis import (
     monthly_median_rent, new_listings_per_month, pct_change_vs, active_listings_per_month
 )
@@ -209,24 +216,6 @@ def calculate_price_trends(listings_df, prices_df):
 
     return df
 
-# Get aggregated rental statistics
-def get_rental_statistics(listings_df):
-    # Filter for listings that are no longer published (were rented out)
-    rented_df = listings_df[listings_df['still_published'] == False].copy()
-
-    if rented_df.empty:
-        return None
-
-    # Group by number of rooms
-    stats = rented_df.groupby('rooms').agg(
-        avg_price=('last_price', 'mean'),
-        min_price=('last_price', 'min'),
-        max_price=('last_price', 'max'),
-        count=('id', 'count')
-    ).reset_index()
-
-    return stats
-
 # Format dollar amount
 def format_price(price):
     if pd.isna(price):
@@ -324,7 +313,6 @@ def main():
     # Calculate trends and statistics
     if not listings_df.empty and not prices_df.empty:
         listings_with_trends = calculate_price_trends(listings_df, prices_df)
-        rental_stats = get_rental_statistics(listings_df)
     else:
         st.error("No data available. Please make sure the scraper has run at least once.")
         return
