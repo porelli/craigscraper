@@ -55,3 +55,19 @@ def test_active_listings_per_month_year_boundary():
     out = active_listings_per_month(spans)
     assert list(out['month']) == ['2025-11', '2025-12', '2026-01']
     assert list(out['active']) == [1, 1, 1]
+
+
+def test_sqlite_month_extraction_matches_iso_timestamps():
+    # Regression guard: prices/listings store ISO-8601 with a 'T' and tz offset, which SQLite's
+    # strftime() CANNOT parse (returns NULL). The UI must extract months with substr(col,1,7).
+    # This test pins that behavior so nobody reverts the UI SQL back to strftime('%Y-%m', ...).
+    import sqlite3
+    con = sqlite3.connect(':memory:')
+    con.execute("CREATE TABLE t (ts TEXT)")
+    con.execute("INSERT INTO t VALUES ('2025-02-16T12:00:53-0800')")
+    strftime_month, substr_month = con.execute(
+        "SELECT strftime('%Y-%m', ts), substr(ts, 1, 7) FROM t"
+    ).fetchone()
+    con.close()
+    assert strftime_month is None          # strftime fails on this format
+    assert substr_month == '2025-02'       # substr is the correct extraction
