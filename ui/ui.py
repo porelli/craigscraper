@@ -403,6 +403,11 @@ def main():
             display_df['posted_on'] = display_df['posted_on'].dt.strftime('%Y-%m-%d')
             display_df['last_updated'] = display_df['last_updated'].dt.strftime('%Y-%m-%d')
 
+            # Render feature flags as emoji (values are Python booleans from load_listings_data)
+            feature_icons = {'gym': '🏋️', 'pool': '🏊', 'parking': '🅿️', 'ev_charging': '⚡'}
+            for col, icon in feature_icons.items():
+                display_df[col] = display_df[col].map({True: icon, False: ''})
+
             # Create clickable title (instead of URL)
             display_df['clickable_title'] = display_df.apply(
                 lambda x: f'<a href="{x["link"]}" target="_blank">{x["title"]}</a>', axis=1
@@ -435,9 +440,13 @@ def main():
                 'price_trend': 'Price Trend'
             })
 
-            # Let user sort by any column
-            sort_col = st.selectbox("Sort by", options=display_df.columns, index=3) # Default to Price
-            sort_order = st.radio("Order", options=["Ascending", "Descending"], horizontal=True, index=0)
+            # Let user sort by any column. Default to Size, descending.
+            # NOTE: 'Price' sorts lexically here because it's a formatted string ($2,100) at
+            # this point — a pre-existing caveat, intentionally not fixed in this change.
+            sort_options = list(display_df.columns)
+            default_sort_index = sort_options.index('Size') if 'Size' in sort_options else 0
+            sort_col = st.selectbox("Sort by", options=sort_options, index=default_sort_index)
+            sort_order = st.radio("Order", options=["Ascending", "Descending"], horizontal=True, index=1)
 
             # Apply sorting
             ascending = sort_order == "Ascending"
