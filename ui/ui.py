@@ -5,6 +5,9 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 import os
+from craigscraper.market_analysis import (
+    monthly_median_rent, new_listings_per_month, pct_change_vs, active_listings_per_month
+)
 
 # Set page configuration
 st.set_page_config(
@@ -99,6 +102,35 @@ def load_prices_data():
     if 'last_updated' in df.columns:
         df['last_updated'] = pd.to_datetime(df['last_updated'], errors='coerce', utc=True)
 
+    return df
+
+@st.cache_data(ttl=300)
+def load_price_months():
+    # one row per price point: month, bedrooms, price (joined to the listing's bedroom count)
+    conn = get_connection()
+    query = """
+    SELECT strftime('%Y-%m', p.last_updated) AS month, l.bedrooms AS bedrooms, p.price AS price
+    FROM prices p
+    JOIN listings l ON l.id = p.listing_id
+    WHERE l.bedrooms IS NOT NULL AND p.price IS NOT NULL
+    """
+    return pd.read_sql_query(query, conn)
+
+@st.cache_data(ttl=300)
+def load_posted_and_dom():
+    # posted month (for new-listings) and approximate days-on-market per listing
+    conn = get_connection()
+    query = """
+    SELECT strftime('%Y-%m', posted_on) AS posted_month,
+           strftime('%Y-%m', last_updated) AS last_month,
+           posted_on, last_updated
+    FROM listings
+    WHERE posted_on IS NOT NULL
+    """
+    df = pd.read_sql_query(query, conn)
+    df['posted_on'] = pd.to_datetime(df['posted_on'], errors='coerce', utc=True)
+    df['last_updated'] = pd.to_datetime(df['last_updated'], errors='coerce', utc=True)
+    df['days_on_market'] = (df['last_updated'] - df['posted_on']).dt.days
     return df
 
 # Get price history for a specific listing
@@ -556,104 +588,121 @@ def main():
 
     with tab3:
         st.markdown('<div class="subheader">Market Statistics</div>', unsafe_allow_html=True)
+        rent_tab, activity_tab, snapshot_tab = st.tabs(["Rent over time", "Market activity", "Snapshot"])
 
-        # Create tabs within this tab
-        stat_tab1, stat_tab2 = st.tabs(["Price Distribution", "Rented Properties"])
-
-        with stat_tab1:
-            # Price distribution by room count
-            if not listings_df.empty:
-                fig = px.box(
-                    listings_with_trends,
-                    x='rooms',
-                    y='last_price',
-                    title='Price Distribution by Room Count',
-                    labels={'rooms': 'Number of Rooms', 'last_price': 'Price ($)'}
+        # ---- Rent over time ----
+        with rent_tab:
+            price_months = load_price_months()
+            medians = monthly_median_rent(price_months)
+            if medians.empty:
+                st.info("Not enough price history yet to chart rent over time.")
+            else:
+                fig = px.line(
+                    medians, x='month', y='median_price', color='bedrooms', markers=True,
+                    title='Median asking rent by month (per bedroom count)',
+                    labels={'month': 'Month', 'median_price': 'Median rent ($)', 'bedrooms': 'Bedrooms'}
                 )
+                fig.update_layout(yaxis=dict(tickprefix="$"), hovermode="x")
                 st.plotly_chart(fig, width="stretch")
 
-                # Price statistics table
-                price_stats = listings_with_trends.groupby('rooms').agg(
-                    avg_price=('last_price', 'mean'),
-                    median_price=('last_price', 'median'),
-                    min_price=('last_price', 'min'),
-                    max_price=('last_price', 'max'),
-                    count=('id', 'count')
-                ).reset_index()
+                # overall median per month (all bedrooms pooled) for the delta metrics
+                overall = (price_months.groupby('month')['price'].median()
+                           .reset_index().rename(columns={'price': 'median_price'})
+                           .sort_values('month'))
+                c3, c6, c12 = st.columns(3)
+                for col, months_back, label in ((c3, 3, "vs 3 mo ago"),
+                                                 (c6, 6, "vs 6 mo ago"),
+                                                 (c12, 12, "vs 12 mo ago")):
+                    pct = pct_change_vs(overall, months_back)
+                    latest = overall.iloc[-1]['median_price']
+                    with col:
+                        st.metric(label, f"${latest:,.0f}",
+                                  delta=(f"{pct:+.1f}%" if pct is not None else "n/a"))
 
-                price_stats['avg_price'] = price_stats['avg_price'].round().astype(int).apply(format_price)
-                price_stats['median_price'] = price_stats['median_price'].round().astype(int).apply(format_price)
-                price_stats['min_price'] = price_stats['min_price'].astype(int).apply(format_price)
-                price_stats['max_price'] = price_stats['max_price'].astype(int).apply(format_price)
-
-                price_stats.columns = ['Rooms', 'Average Price', 'Median Price', 'Min Price', 'Max Price', 'Count']
-                st.write(price_stats)
-
-                # Price trend analysis
-                st.subheader("Price Trend Analysis")
-                trend_data = listings_with_trends.groupby('trend').size().reset_index(name='count')
-                if not trend_data.empty:
-                    fig = px.pie(
-                        trend_data,
-                        values='count',
-                        names='trend',
-                        title='Price Trend Distribution',
-                        color='trend',
-                        color_discrete_map={
-                            'increase': 'red',
-                            'decrease': 'green',
-                            'stable': 'gray'
-                        }
-                    )
-                    st.plotly_chart(fig, width="stretch")
+        # ---- Market activity ----
+        with activity_tab:
+            pdom = load_posted_and_dom()
+            if pdom.empty:
+                st.info("Not enough listing data yet to chart market activity.")
             else:
-                st.warning("Not enough data to display price distribution.")
+                newpm = new_listings_per_month(pdom['posted_month'])
+                fig = px.bar(newpm, x='month', y='count', title='New listings per month',
+                             labels={'month': 'Month', 'count': 'New listings'})
+                st.plotly_chart(fig, width="stretch")
 
-        with stat_tab2:
-            # Statistics for rented properties
-            if rental_stats is not None and not rental_stats.empty:
-                st.subheader("Recently Rented Properties")
+                # inventory over time: active listings per month (posted_month..last_month inclusive)
+                inv = active_listings_per_month(pdom[['posted_month', 'last_month']])
+                if not inv.empty:
+                    fig = px.line(inv, x='month', y='active', markers=True,
+                                  title='Active listings per month (inventory, approximate)',
+                                  labels={'month': 'Month', 'active': 'Active listings'})
+                    st.plotly_chart(fig, width="stretch")
+                    st.caption("Inventory is approximate: a listing is counted as active from its "
+                               "posted month through its last-seen month.")
 
-                # Format prices
-                display_stats = rental_stats.copy()
-                display_stats['avg_price'] = display_stats['avg_price'].round().astype(int).apply(format_price)
-                display_stats['min_price'] = display_stats['min_price'].astype(int).apply(format_price)
-                display_stats['max_price'] = display_stats['max_price'].astype(int).apply(format_price)
+                # approximate days-on-market by posted month
+                dom = (pdom.dropna(subset=['days_on_market'])
+                       .groupby('posted_month')['days_on_market'].mean().reset_index())
+                if not dom.empty:
+                    fig = px.line(dom, x='posted_month', y='days_on_market', markers=True,
+                                  title='Average days on market by posted month (approximate)',
+                                  labels={'posted_month': 'Month', 'days_on_market': 'Avg days on market'})
+                    st.plotly_chart(fig, width="stretch")
+                    st.caption("Days on market is approximate: measured from posted date to the "
+                               "listing's last-seen date (we detect removal at the next scrape).")
 
-                display_stats.columns = ['Rooms', 'Average Price', 'Min Price', 'Max Price', 'Count']
-                st.table(display_stats)
+        # ---- Snapshot (existing charts, regrouped by bedrooms) ----
+        with snapshot_tab:
+            snap_price, snap_rented = st.tabs(["Price Distribution", "Rented Properties"])
+            with snap_price:
+                if not listings_df.empty:
+                    fig = px.box(listings_with_trends, x='bedrooms', y='last_price',
+                                 title='Price Distribution by Bedrooms',
+                                 labels={'bedrooms': 'Bedrooms', 'last_price': 'Price ($)'})
+                    st.plotly_chart(fig, width="stretch")
 
-                # Show chart for rented properties
+                    price_stats = listings_with_trends.groupby('bedrooms').agg(
+                        avg_price=('last_price', 'mean'),
+                        median_price=('last_price', 'median'),
+                        min_price=('last_price', 'min'),
+                        max_price=('last_price', 'max'),
+                        count=('id', 'count')
+                    ).reset_index()
+                    for c in ['avg_price', 'median_price', 'min_price', 'max_price']:
+                        price_stats[c] = price_stats[c].round().astype(int).apply(format_price)
+                    price_stats.columns = ['Bedrooms', 'Average Price', 'Median Price', 'Min Price', 'Max Price', 'Count']
+                    st.write(price_stats)
+
+                    st.subheader("Price Trend Analysis")
+                    trend_data = listings_with_trends.groupby('trend').size().reset_index(name='count')
+                    if not trend_data.empty:
+                        fig = px.pie(trend_data, values='count', names='trend',
+                                     title='Price Trend Distribution', color='trend',
+                                     color_discrete_map={'increase': 'red', 'decrease': 'green', 'stable': 'gray'})
+                        st.plotly_chart(fig, width="stretch")
+                else:
+                    st.warning("Not enough data to display price distribution.")
+
+            with snap_rented:
                 rented_df = listings_df[listings_df['still_published'] == False].copy()
-                fig = px.histogram(
-                    rented_df,
-                    x='last_price',
-                    color='rooms',
-                    title='Distribution of Rented Property Prices',
-                    labels={'last_price': 'Price ($)', 'count': 'Number of Properties'},
-                    nbins=20
-                )
-                st.plotly_chart(fig, width="stretch")
+                if rented_df.empty:
+                    st.info("No data available for rented properties yet.")
+                else:
+                    rented_stats = rented_df.groupby('bedrooms').agg(
+                        avg_price=('last_price', 'mean'),
+                        min_price=('last_price', 'min'),
+                        max_price=('last_price', 'max'),
+                        count=('id', 'count')
+                    ).reset_index()
+                    for c in ['avg_price', 'min_price', 'max_price']:
+                        rented_stats[c] = rented_stats[c].round().astype(int).apply(format_price)
+                    rented_stats.columns = ['Bedrooms', 'Average Price', 'Min Price', 'Max Price', 'Count']
+                    st.table(rented_stats)
 
-                # Time on market analysis
-                if 'posted_on' in rented_df.columns and 'last_updated' in rented_df.columns:
-                    rented_df['days_on_market'] = (rented_df['last_updated'] - rented_df['posted_on']).dt.days
-                    fig = px.box(
-                        rented_df,
-                        x='rooms',
-                        y='days_on_market',
-                        title='Days on Market by Room Count',
-                        labels={'rooms': 'Number of Rooms', 'days_on_market': 'Days on Market'}
-                    )
+                    fig = px.histogram(rented_df, x='last_price', color='bedrooms',
+                                       title='Distribution of Rented Property Prices',
+                                       labels={'last_price': 'Price ($)'}, nbins=20)
                     st.plotly_chart(fig, width="stretch")
-
-                    # Average days on market
-                    avg_days = rented_df.groupby('rooms')['days_on_market'].mean().round(1).reset_index()
-                    avg_days.columns = ['Rooms', 'Average Days on Market']
-                    st.write("Average Days on Market by Room Count")
-                    st.write(avg_days)
-            else:
-                st.info("No data available for rented properties yet. This section will populate as properties are rented out.")
 
 # CSS for styling
 def load_css():
