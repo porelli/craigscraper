@@ -46,6 +46,7 @@ Note: `craigscraper/market_analysis.py` lives in the package but has NO scrapy/s
   - `monthly_median_rent(prices_df) -> DataFrame[month, bedrooms, median_price, n]` — input has columns `month` (str 'YYYY-MM'), `bedrooms` (float), `price` (int); groups by (month, bedrooms), computes median price and count `n`, drops buckets with `n < MIN_POINTS_PER_BUCKET`.
   - `new_listings_per_month(posted_months) -> DataFrame[month, count]` — input is a Series/list of 'YYYY-MM' strings; returns counts per month sorted by month.
   - `pct_change_vs(median_overall_df, months_back) -> float | None` — given a DataFrame[month, median_price] (overall, one row per month, sorted), returns the % change of the latest month's median vs the median `months_back` calendar months earlier; None if that month is absent.
+  - `active_listings_per_month(spans_df) -> DataFrame[month, active]` — input has columns `posted_month` ('YYYY-MM') and `last_month` ('YYYY-MM', the month of last_updated); for each listing, counts it as active in every month from `posted_month` through `last_month` inclusive, then returns the count of active listings per month sorted by month. This is the "inventory over time" curve.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -54,7 +55,8 @@ Create `tests/test_market_analysis.py`:
 ```python
 import pandas as pd
 from craigscraper.market_analysis import (
-    MIN_POINTS_PER_BUCKET, monthly_median_rent, new_listings_per_month, pct_change_vs
+    MIN_POINTS_PER_BUCKET, monthly_median_rent, new_listings_per_month,
+    pct_change_vs, active_listings_per_month
 )
 
 def _prices(rows):
@@ -92,6 +94,22 @@ def test_pct_change_vs_present():
 def test_pct_change_vs_missing_returns_none():
     df = pd.DataFrame({'month': ['2025-04'], 'median_price': [2200]})
     assert pct_change_vs(df, 3) is None
+
+def test_active_listings_per_month_spans_inclusive():
+    # listing A active 2025-01..2025-03; listing B active 2025-02..2025-02 (posted+removed same month)
+    spans = pd.DataFrame(
+        [('2025-01', '2025-03'), ('2025-02', '2025-02')],
+        columns=['posted_month', 'last_month']
+    )
+    out = active_listings_per_month(spans)
+    got = dict(zip(out['month'], out['active']))
+    assert got == {'2025-01': 1, '2025-02': 2, '2025-03': 1}
+
+def test_active_listings_per_month_year_boundary():
+    spans = pd.DataFrame([('2025-11', '2026-01')], columns=['posted_month', 'last_month'])
+    out = active_listings_per_month(spans)
+    assert list(out['month']) == ['2025-11', '2025-12', '2026-01']
+    assert list(out['active']) == [1, 1, 1]
 ```
 
 - [ ] **Step 2: Run the tests, verify they fail**
@@ -150,6 +168,33 @@ def pct_change_vs(median_overall_df, months_back):
     if prev == 0:
         return None
     return (latest_val - prev) / prev * 100
+
+
+def _month_to_index(month_str):
+    # 'YYYY-MM' -> integer month index (year*12 + month-1) for inclusive range math
+    return int(month_str[:4]) * 12 + (int(month_str[5:7]) - 1)
+
+
+def _index_to_month(idx):
+    return '%04d-%02d' % (idx // 12, (idx % 12) + 1)
+
+
+def active_listings_per_month(spans_df):
+    # spans_df columns: posted_month ('YYYY-MM'), last_month ('YYYY-MM').
+    # Count each listing as active in every month from posted_month through last_month inclusive.
+    if spans_df.empty:
+        return pd.DataFrame(columns=['month', 'active'])
+    counts = {}
+    for _, r in spans_df.dropna(subset=['posted_month', 'last_month']).iterrows():
+        start = _month_to_index(r['posted_month'])
+        end = _month_to_index(r['last_month'])
+        if end < start:  # defensive: ignore inverted spans
+            continue
+        for idx in range(start, end + 1):
+            m = _index_to_month(idx)
+            counts[m] = counts.get(m, 0) + 1
+    out = pd.DataFrame(sorted(counts.items()), columns=['month', 'active'])
+    return out
 ```
 
 - [ ] **Step 4: Run the tests, verify they pass**
@@ -251,7 +296,7 @@ Near the other `@st.cache_data` helpers (top of `ui.py`), add:
 
 ```python
 from craigscraper.market_analysis import (
-    monthly_median_rent, new_listings_per_month, pct_change_vs
+    monthly_median_rent, new_listings_per_month, pct_change_vs, active_listings_per_month
 )
 
 @st.cache_data(ttl=300)
@@ -272,6 +317,7 @@ def load_posted_and_dom():
     conn = get_connection()
     query = """
     SELECT strftime('%Y-%m', posted_on) AS posted_month,
+           strftime('%Y-%m', last_updated) AS last_month,
            posted_on, last_updated
     FROM listings
     WHERE posted_on IS NOT NULL
@@ -332,6 +378,16 @@ through the end of the current stat_tab1/stat_tab2 content) with:
                 fig = px.bar(newpm, x='month', y='count', title='New listings per month',
                              labels={'month': 'Month', 'count': 'New listings'})
                 st.plotly_chart(fig, width="stretch")
+
+                # inventory over time: active listings per month (posted_month..last_month inclusive)
+                inv = active_listings_per_month(pdom[['posted_month', 'last_month']])
+                if not inv.empty:
+                    fig = px.line(inv, x='month', y='active', markers=True,
+                                  title='Active listings per month (inventory, approximate)',
+                                  labels={'month': 'Month', 'active': 'Active listings'})
+                    st.plotly_chart(fig, width="stretch")
+                    st.caption("Inventory is approximate: a listing is counted as active from its "
+                               "posted month through its last-seen month.")
 
                 # approximate days-on-market by posted month
                 dom = (pdom.dropna(subset=['days_on_market'])
@@ -509,5 +565,5 @@ Expected: clean tree.
 - **Spec coverage:** Size-desc default (Task 2 Step 2) ✓; emoji columns (Task 2 Step 1) ✓; rent-over-time with per-bedroom medians + 3/6/12mo deltas + sparsity guard (Task 1 + Task 3 Step 2) ✓; market activity: new listings/month + approximate labeled days-on-market (Task 3 Step 2) ✓; snapshot regrouped by bedrooms (Task 3 Step 2) ✓; parameterized SQL (Task 3 Step 1) ✓; median in pandas not SQLite (Task 1) ✓; unit test aggregation (Task 1) ✓; Playwright visual verification incl. exception-element check (Tasks 2,3,4) ✓; deploy with backup, no migration (Task 4) ✓; caveats out of scope (numeric sort, true removal date) — noted, not built ✓.
 - **Placeholder scan:** none — all code and commands concrete.
 - **Type/name consistency:** `monthly_median_rent`/`new_listings_per_month`/`pct_change_vs`/`MIN_POINTS_PER_BUCKET` defined in Task 1 and imported/called identically in Task 3; helper columns (`month`, `bedrooms`, `price`, `median_price`, `n`, `count`, `posted_month`, `days_on_market`) consistent between the SQL helpers and the aggregation functions.
-- **Inventory-over-time note:** the spec listed an "inventory over time" chart; it's the trickiest (requires expanding each listing across its active months) and adds noise. It is intentionally folded into "new listings per month" + days-on-market for this pass to keep the activity tab focused; if you want the explicit inventory curve, it's a fast follow. Flagging so it's not a silent drop.
+- **Inventory-over-time:** included per user decision — `active_listings_per_month` (Task 1) expands each listing across posted_month..last_month inclusive, unit-tested (inclusive span + year boundary), and charted in the activity tab (Task 3) labeled approximate.
 ```
