@@ -403,10 +403,11 @@ def main():
             display_df['posted_on'] = display_df['posted_on'].dt.strftime('%Y-%m-%d')
             display_df['last_updated'] = display_df['last_updated'].dt.strftime('%Y-%m-%d')
 
-            # Render feature flags as emoji (values are Python booleans from load_listings_data)
+            # Render feature flags as emoji (values are Python booleans from load_listings_data).
+            # fillna(False) guards against any NULL feature value rendering as literal 'nan'.
             feature_icons = {'gym': '🏋️', 'pool': '🏊', 'parking': '🅿️', 'ev_charging': '⚡'}
             for col, icon in feature_icons.items():
-                display_df[col] = display_df[col].map({True: icon, False: ''})
+                display_df[col] = display_df[col].fillna(False).map({True: icon, False: ''})
 
             # Create clickable title (instead of URL)
             display_df['clickable_title'] = display_df.apply(
