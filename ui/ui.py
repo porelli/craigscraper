@@ -614,9 +614,10 @@ def main():
                 st.info("Not enough listing data yet to chart market activity.")
             else:
                 newpm = new_listings_per_month(pdom['posted_month'])
-                fig = px.bar(newpm, x='month', y='count', title='New listings per month',
-                             labels={'month': 'Month', 'count': 'New listings'})
-                st.plotly_chart(fig, width="stretch")
+                if not newpm.empty:
+                    fig = px.bar(newpm, x='month', y='count', title='New listings per month',
+                                 labels={'month': 'Month', 'count': 'New listings'})
+                    st.plotly_chart(fig, width="stretch")
 
                 # inventory over time: active listings per month (posted_month..last_month inclusive)
                 inv = active_listings_per_month(pdom[['posted_month', 'last_month']])
